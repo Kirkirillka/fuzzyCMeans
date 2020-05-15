@@ -18,7 +18,6 @@
 package org.apache.spark.mllib.clustering
 
 import scala.collection.mutable.ArrayBuffer
-
 import com.typesafe.scalalogging.Logger
 import org.apache.spark.annotation.{Experimental, Since}
 import org.apache.spark.mllib.linalg.{Vector, Vectors}
@@ -26,7 +25,7 @@ import org.apache.spark.mllib.linalg.BLAS.{axpy, scal}
 import org.apache.spark.mllib.util.MLUtils
 import org.apache.spark.rdd.RDD
 import org.apache.spark.storage.StorageLevel
-import org.apache.spark.util.Utils
+import org.apache.spark.util.{AccumulatorV2, Utils}
 import org.apache.spark.util.random.XORShiftRandom
 
 
@@ -293,7 +292,11 @@ class FuzzyCMeans private(
       // the centers for each run still active
       val activeCenters = activeRuns.map(r => centers(r)).toArray
       // the cost for each run - one accumulator per run
-      val costAccums = activeRuns.map(_ => sc.accumulator(0.0))
+      val costAccums = activeRuns.map(i => {
+        val acc = new CostAccumulator(0.0)
+        sc.register(acc, f"CostAcc_${i}")
+        acc
+      })
 
       // broadcast the centers
       val bcActiveCenters = sc.broadcast(activeCenters)
@@ -337,7 +340,7 @@ class FuzzyCMeans private(
               foreach { degreeWithIndex =>
                 val (deg, ind) = degreeWithIndex
                 // the total cost increases
-                costAccums(i) += deg * distances(ind)
+                costAccums(i).add(deg * distances(ind))
                 // add the current point to the cluster sum
                 val sum = sums(i)(ind)
                 axpy(deg, point.vector, sum)
@@ -355,7 +358,7 @@ class FuzzyCMeans private(
         }
         contribs.iterator
         // The key is a combination of run and cluster
-        // reduceByKey computes the values accross clusters (sum and count)
+        // reduceByKey computes the values across clusters (sum and count)
       }.reduceByKey(mergeContribs).collectAsMap()
 
       // At this point, for each run, each cluster,
@@ -418,7 +421,7 @@ class FuzzyCMeans private(
   private def initRandom(data: RDD[VectorWithNorm])
   : Array[Array[VectorWithNorm]] = {
     // Sample all the cluster centers in one pass to avoid repeated scans
-    val sample = data.takeSample(true, runs * k, new XORShiftRandom(this.seed).nextInt()).toSeq
+    val sample = data.takeSample(withReplacement = true, runs * k, new XORShiftRandom(this.seed).nextInt()).toSeq
     Array.tabulate(runs)(r => sample.slice(r * k, (r + 1) * k).map { v =>
       new VectorWithNorm(Vectors.dense(v.vector.toArray), v.norm)
     }.toArray)
@@ -766,4 +769,27 @@ class VectorWithNorm(val vector: Vector, val norm: Double) extends Serializable 
 
   /** Converts the vector to a dense vector. */
   def toDense: VectorWithNorm = new VectorWithNorm(Vectors.dense(vector.toArray), norm)
+}
+
+
+private[clustering]
+class CostAccumulator(private var sum: Double = 0) extends AccumulatorV2[Double, Double] {
+
+  override def isZero: Boolean = sum == 0
+
+  override def copy(): AccumulatorV2[Double, Double] = {
+
+    val newCostAcc = new CostAccumulator()
+
+    newCostAcc.sum = this.sum
+    newCostAcc
+  }
+
+  override def reset(): Unit = sum = 0
+
+  override def add(v: Double): Unit = sum += v
+
+  override def merge(other: AccumulatorV2[Double, Double]): Unit = sum += other.value
+
+  override def value: Double = sum
 }
