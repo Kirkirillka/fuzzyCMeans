@@ -37,7 +37,7 @@ import org.apache.spark.sql.Row
  */
 class FuzzyCMeansModel(val clusterCenters: Array[Vector],
                        val m: Double = 2.0)
-  extends Saveable with Serializable with PMMLExportable {
+  extends Serializable with PMMLExportable {
 
   /**
    * A Java-friendly constructor that takes an Iterable of Vectors.
@@ -75,7 +75,7 @@ class FuzzyCMeansModel(val clusterCenters: Array[Vector],
   def predict(points: RDD[Vector]): RDD[Int] = {
     val centersWithNorm = clusterCentersWithNorm
     val bcCentersWithNorm = points.context.broadcast(centersWithNorm)
-    points.map(p => KMeans.findClosest(bcCentersWithNorm.value, new VectorWithNorm(p))._1)
+    points.map(p => FuzzyCMeans.findClosest(bcCentersWithNorm.value, new VectorWithNorm(p))._1)
   }
 
   /**
@@ -108,71 +108,10 @@ class FuzzyCMeansModel(val clusterCenters: Array[Vector],
   def computeCost(data: RDD[Vector]): Double = {
     val centersWithNorm = clusterCentersWithNorm
     val bcCentersWithNorm = data.context.broadcast(centersWithNorm)
-    data.map(p => KMeans.pointCost(bcCentersWithNorm.value, new VectorWithNorm(p))).sum()
+    data.map(p => FuzzyCMeans.pointCost(bcCentersWithNorm.value, new VectorWithNorm(p))).sum()
   }
 
   private def clusterCentersWithNorm: Iterable[VectorWithNorm] =
     clusterCenters.map(new VectorWithNorm(_))
-
-  override def save(sc: SparkContext, path: String): Unit = {
-    FuzzyCMeansModel.SaveLoadV1_0.save(sc, this, path)
-  }
-
-  override protected def formatVersion: String = "1.0"
-}
-
-object FuzzyCMeansModel extends Loader[FuzzyCMeansModel] {
-
-  override def load(sc: SparkContext, path: String): FuzzyCMeansModel = {
-    FuzzyCMeansModel.SaveLoadV1_0.load(sc, path)
-  }
-
-  private case class Cluster(id: Int, point: Vector)
-
-  private object Cluster {
-    def apply(r: Row): Cluster = {
-      Cluster(r.getInt(0), r.getAs[Vector](1))
-    }
-  }
-
-  private[clustering]
-  object SaveLoadV1_0 {
-
-    private val thisFormatVersion = "1.0"
-
-    private[clustering]
-    val thisClassName = "org.apache.spark.mllib.clustering.FuzzyCMeansModel"
-
-    def save(sc: SparkContext, model: FuzzyCMeansModel, path: String): Unit = {
-      val sqlContext = new SQLContext(sc)
-      import sqlContext.implicits._
-      val metadata = compact(render(
-        ("class" -> thisClassName)
-          ~ ("version" -> thisFormatVersion)
-          ~ ("k" -> model.k)
-          ~ ("m" -> model.m)
-      ))
-      sc.parallelize(Seq(metadata), 1).saveAsTextFile(Loader.metadataPath(path))
-      val dataRDD = sc.parallelize(model.clusterCenters.zipWithIndex).map { case (point, id) =>
-        Cluster(id, point)
-      }.toDF()
-      dataRDD.write.parquet(Loader.dataPath(path))
-    }
-
-    def load(sc: SparkContext, path: String): FuzzyCMeansModel = {
-      implicit val formats = DefaultFormats
-      val sqlContext = new SQLContext(sc)
-      val (className, formatVersion, metadata) = Loader.loadMetadata(sc, path)
-      assert(className == thisClassName)
-      assert(formatVersion == thisFormatVersion)
-      val k = (metadata \ "k").extract[Int]
-      val m = (metadata \ "m").extractOpt[Double].getOrElse(1.0)
-      val centroids = sqlContext.read.parquet(Loader.dataPath(path))
-      Loader.checkSchema[Cluster](centroids.schema)
-      val localCentroids = centroids.map(Cluster.apply).collect()
-      assert(k == localCentroids.length)
-      new FuzzyCMeansModel(localCentroids.sortBy(_.id).map(_.point), m)
-    }
-  }
 
 }

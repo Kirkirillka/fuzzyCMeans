@@ -162,22 +162,22 @@ class FuzzyCMeansSuite extends SparkFunSuite with MLlibTestSparkContext {
     data.unpersist()
   }
 
-  test("model save/load") {
-    val tempDir = Utils.createTempDir()
-    val path = tempDir.toURI.toString
-
-    Array(true, false).foreach { case selector =>
-      val model = FuzzyCSuite.createModel(10, 3, selector)
-      // Save model, load it back, and compare.
-      try {
-        model.save(sc, path)
-        val sameModel = FuzzyCMeansModel.load(sc, path)
-        FuzzyCSuite.checkEqual(model, sameModel)
-      } finally {
-        Utils.deleteRecursively(tempDir)
-      }
-    }
-  }
+//  test("model save/load") {
+//    val tempDir = Utils.createTempDir()
+//    val path = tempDir.toURI.toString
+//
+//    Array(true, false).foreach { case selector =>
+//      val model = FuzzyCSuite.createModel(10, 3, selector)
+//      // Save model, load it back, and compare.
+//      try {
+//        model.save(sc, path)
+//        val sameModel = FuzzyCMeansModel.load(sc, path)
+//        FuzzyCSuite.checkEqual(model, sameModel)
+//      } finally {
+//        Utils.deleteRecursively(tempDir)
+//      }
+//    }
+//  }
 
 }
 

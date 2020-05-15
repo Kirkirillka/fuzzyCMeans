@@ -19,7 +19,7 @@ package org.apache.spark.mllib.clustering
 
 import scala.collection.mutable.ArrayBuffer
 
-import org.apache.spark.Logging
+import com.typesafe.scalalogging.Logger
 import org.apache.spark.annotation.{Experimental, Since}
 import org.apache.spark.mllib.linalg.{Vector, Vectors}
 import org.apache.spark.mllib.linalg.BLAS.{axpy, scal}
@@ -28,6 +28,7 @@ import org.apache.spark.rdd.RDD
 import org.apache.spark.storage.StorageLevel
 import org.apache.spark.util.Utils
 import org.apache.spark.util.random.XORShiftRandom
+
 
 /**
  * FuzzyCmeans clustering with support for multiple parallel runs and a k-means++ like initialization
@@ -45,7 +46,9 @@ class FuzzyCMeans private(
                            private var initializationMode: String,
                            private var initializationSteps: Int,
                            private var epsilon: Double,
-                           private var seed: Long) extends Serializable with Logging {
+                           private var seed: Long) extends Serializable {
+
+  private val logger = Logger("name")
 
   /**
    * Constructs a FuzzyCMeans instance with default parameters: {k: 2, m: 2, maxIterations: 20, runs: 1,
@@ -201,7 +204,7 @@ class FuzzyCMeans private(
   def run(data: RDD[Vector]): FuzzyCMeansModel = {
 
     if (data.getStorageLevel == StorageLevel.NONE) {
-      logWarning("The input data is not directly cached, which may hurt performance if its"
+      logger.warn("The input data is not directly cached, which may hurt performance if its"
         + " parent RDDs are also uncached.")
     }
 
@@ -216,7 +219,7 @@ class FuzzyCMeans private(
 
     // Warn at the end of the run as well, for increased visibility.
     if (data.getStorageLevel == StorageLevel.NONE) {
-      logWarning("The input data was not directly cached, which may hurt performance if its"
+      logger.warn("The input data was not directly cached, which may hurt performance if its"
         + " parent RDDs are also uncached.")
     }
     model
@@ -233,7 +236,7 @@ class FuzzyCMeans private(
 
     // Only one run is allowed when initialModel is given
     val numRuns = if (initialModel.nonEmpty) {
-      if (runs > 1) logWarning("Ignoring runs; one run is allowed when initialModel is given.")
+      if (runs > 1) logger.warn("Ignoring runs; one run is allowed when initialModel is given.")
       1
     } else {
       runs
@@ -255,7 +258,7 @@ class FuzzyCMeans private(
 
     }
     val initTimeInSeconds = (System.nanoTime() - initStartTime) / 1e9
-    logInfo(s"Initialization with $initializationMode took " + "%.3f".format(initTimeInSeconds) +
+    logger.info(s"Initialization with $initializationMode took " + "%.3f".format(initTimeInSeconds) +
       " seconds.")
 
     // Initially all runs are active (active == true means the according run has not yet converged)
@@ -371,7 +374,7 @@ class FuzzyCMeans private(
             scal(1.0 / fuzzyCount, sum)
             val newCenter = new VectorWithNorm(sum)
             // Changed - (distance greater than epsilon squared)
-            if (KMeans.fastSquaredDistance(newCenter, centers(run)(j)) > epsilon * epsilon) {
+            if (FuzzyCMeans.fastSquaredDistance(newCenter, centers(run)(j)) > epsilon * epsilon) {
               changed = true
             }
             centers(run)(j) = newCenter
@@ -381,7 +384,7 @@ class FuzzyCMeans private(
         if (!changed) {
           // Kill the run that converged already
           active(run) = false
-          logInfo("Run " + run + " finished in " + (iteration + 1) + " iterations")
+          logger.info("Run " + run + " finished in " + (iteration + 1) + " iterations")
         }
         costs(run) = costAccums(i).value
       }
@@ -394,17 +397,17 @@ class FuzzyCMeans private(
     }
 
     val iterationTimeInSeconds = (System.nanoTime() - iterationStartTime) / 1e9
-    logInfo(s"Iterations took " + "%.3f".format(iterationTimeInSeconds) + " seconds.")
+    logger.info(s"Iterations took " + "%.3f".format(iterationTimeInSeconds) + " seconds.")
 
     if (iteration == maxIterations) {
-      logInfo(s"KMeans reached the max number of iterations: $maxIterations.")
+      logger.info(s"KMeans reached the max number of iterations: $maxIterations.")
     } else {
-      logInfo(s"KMeans converged in $iteration iterations.")
+      logger.info(s"KMeans converged in $iteration iterations.")
     }
 
     val (minCost, bestRun) = costs.zipWithIndex.min
 
-    logInfo(s"The cost for the best run is $minCost.")
+    logger.info(s"The cost for the best run is $minCost.")
 
     new FuzzyCMeansModel(centers(bestRun).map(_.vector), m)
   }
@@ -438,7 +441,7 @@ class FuzzyCMeans private(
 
     // Initialize each run's first center to a random point.
     val seed = new XORShiftRandom(this.seed).nextInt()
-    val sample = data.takeSample(true, runs, seed).toSeq
+    val sample = data.takeSample(withReplacement = true, runs, seed).toSeq
     val newCenters = Array.tabulate(runs)(r => ArrayBuffer(sample(r).toDense))
 
     /** Merges new centers to centers. */
@@ -460,7 +463,7 @@ class FuzzyCMeans private(
       val preCosts = costs
       costs = data.zip(preCosts).map { case (point, cost) =>
         Array.tabulate(runs) { r =>
-          math.min(KMeans.pointCost(bcNewCenters.value(r), point), cost(r))
+          math.min(FuzzyCMeans.pointCost(bcNewCenters.value(r), point), cost(r))
         }
       }.persist(StorageLevel.MEMORY_AND_DISK)
       val sumCosts = costs
@@ -513,7 +516,7 @@ class FuzzyCMeans private(
     val bcCenters = data.context.broadcast(centers)
     val weightMap = data.flatMap { p =>
       Iterator.tabulate(runs) { r =>
-        ((r, KMeans.findClosest(bcCenters.value(r), p)._1), 1.0)
+        ((r, FuzzyCMeans.findClosest(bcCenters.value(r), p)._1), 1.0)
       }
     }.reduceByKey(_ + _).collectAsMap()
 
