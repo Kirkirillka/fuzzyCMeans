@@ -36,6 +36,14 @@ import org.apache.spark.util.random.XORShiftRandom
  *
  * This is an iterative algorithm that will make multiple passes over the data, so any RDDs given
  * to it should be cached by the user.
+ *
+ * @param k                     number of clusters
+ * @param maxIterations         max number of iterations
+ * @param runs                  number of parallel runs, defaults to 1. The best model is returned.
+ * @param initializationMode    initialization model, either "random" or "k-means||" (default).
+ * @param initializationSteps   Number of steps for the k-means|| initialization mode
+ * @param epsilon               Threshold in membership values to consider convergence
+ * @param seed                  random seed value for cluster initialization
  */
 class FuzzyCMeans private(
                            private var k: Int,
@@ -369,6 +377,7 @@ class FuzzyCMeans private(
       for ((run, i) <- activeRuns.zipWithIndex) {
         var changed = false
         var j = 0
+        // For each cluster
         while (j < k) {
           val (sum, fuzzyCount) = totalContribs((i, j))
           if (fuzzyCount != 0) {
