@@ -50,8 +50,8 @@ class WeightedFuzzyCMeans private(
                                    private var initializationMode: String,
                                    private var initializationSteps: Int,
                                    private var epsilon: Double,
-                                   private var seed: Long) extends Serializable with Logging{
-  
+                                   private var seed: Long) extends Serializable with Logging {
+
 
   /**
    * Constructs a FuzzyCMeans instance with default parameters: {k: 2, m: 2, maxIterations: 20, runs: 1,
@@ -209,7 +209,7 @@ class WeightedFuzzyCMeans private(
     if (data.getStorageLevel == StorageLevel.NONE) {
       logWarning("The input data is not directly cached, which may hurt performance if its"
         + " parent RDDs are also uncached.")
-      
+
     }
 
     // Compute squared norms and cache them.
@@ -247,13 +247,27 @@ class WeightedFuzzyCMeans private(
       runs = this.runs,
       this.initializationMode, seed = this.seed, m = this.m)
 
+    // Size of data, use to divide by number of data row
+    val dataSize = data.collect().length
+
     // Set initial centers from FCM
     // the same centers per each run
     val centers = Array.fill(numRuns)(fcm.clusterCenters.map(s => new VectorWithNorm(s)))
 
     // Beginning centroid weights initialization
     // The same weights per each run
-    var CentroidsWeights = ArrayBuffer.fill(numRuns,k)(1.0)
+    val initCentroidsWeight = fcm.fuzzyPredict(
+      data.map(_.vector))
+      .map(point => {
+        Vectors.dense(point.map(_._2).toArray)
+      }).map(r =>
+        r
+      ).reduce { (a, b) =>
+        axpy(1.0, a, b)
+        b
+      }.toArray.map(_ / dataSize )
+
+    var CentroidsWeights = ArrayBuffer.fill(numRuns)(initCentroidsWeight)
 
     val initTimeInSeconds = (System.nanoTime() - initStartTime) / 1e9
     logInfo(s"Initialization with $initializationMode took " + "%.3f".format(initTimeInSeconds) +
@@ -301,7 +315,7 @@ class WeightedFuzzyCMeans private(
       // Membership for points.
       // Accumulator per run per cluster
       val weightsUpdateAccumulator = activeRuns.map(i => {
-        ArrayBuffer.fill(k){
+        Array.fill(k) {
           val acc = new MembershipAccumulator(0.0)
           sc.register(acc, f"MembershipAcc_${i}")
           acc
@@ -423,7 +437,7 @@ class WeightedFuzzyCMeans private(
       // update weights
       CentroidsWeights = weightsUpdateAccumulator.map(_.map(_.value))
 
-        // increase number of iterations
+      // increase number of iterations
       iteration += 1
 
     }
