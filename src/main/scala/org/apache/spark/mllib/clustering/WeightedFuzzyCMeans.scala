@@ -17,8 +17,8 @@
 
 package org.apache.spark.mllib.clustering
 
-import com.typesafe.scalalogging.Logger
 import org.apache.spark.annotation.Since
+import org.apache.spark.internal.Logging
 import org.apache.spark.mllib.linalg.BLAS.{axpy, scal}
 import org.apache.spark.mllib.linalg.{Vector, Vectors}
 import org.apache.spark.mllib.util.MLUtils
@@ -31,28 +31,27 @@ import scala.collection.mutable.ArrayBuffer
 
 
 /**
-
+ *
  * Weighted Fuzzy C-Means is a modification of FCM.
  *
- * @param k                     number of clusters
- * @param maxIterations         max number of iterations
- * @param runs                  number of parallel runs, defaults to 1. The best model is returned.
- * @param initializationMode    initialization model, either "random" or "k-means||" (default).
- * @param initializationSteps   Number of steps for the k-means|| initialization mode
- * @param epsilon               Threshold in membership values to consider convergence
- * @param seed                  random seed value for cluster initialization
+ * @param k                   number of clusters
+ * @param maxIterations       max number of iterations
+ * @param runs                number of parallel runs, defaults to 1. The best model is returned.
+ * @param initializationMode  initialization model, either "random" or "k-means||" (default).
+ * @param initializationSteps Number of steps for the k-means|| initialization mode
+ * @param epsilon             Threshold in membership values to consider convergence
+ * @param seed                random seed value for cluster initialization
  */
 class WeightedFuzzyCMeans private(
-                           private var k: Int,
-                           private var m: Double,
-                           private var maxIterations: Int,
-                           private var runs: Int,
-                           private var initializationMode: String,
-                           private var initializationSteps: Int,
-                           private var epsilon: Double,
-                           private var seed: Long) extends Serializable {
-
-  private val logger = Logger("name")
+                                   private var k: Int,
+                                   private var m: Double,
+                                   private var maxIterations: Int,
+                                   private var runs: Int,
+                                   private var initializationMode: String,
+                                   private var initializationSteps: Int,
+                                   private var epsilon: Double,
+                                   private var seed: Long) extends Serializable with Logging{
+  
 
   /**
    * Constructs a FuzzyCMeans instance with default parameters: {k: 2, m: 2, maxIterations: 20, runs: 1,
@@ -188,14 +187,14 @@ class WeightedFuzzyCMeans private(
 
   // Initial cluster centers can be provided as a KMeansModel object rather than using the
   // random or k-means|| initializationMode
-  private var initialModel: Option[FuzzyCMeansModel] = None
+  private var initialModel: Option[WeightedFuzzyCMeansModel] = None
 
   /**
    * Set the initial starting point, bypassing the random initialization or k-means||
    * The condition model.k == this.k must be met, failure results
    * in an IllegalArgumentException.
    */
-  def setInitialModel(model: FuzzyCMeansModel): this.type = {
+  def setInitialModel(model: WeightedFuzzyCMeansModel): this.type = {
     require(model.k == k, "mismatched cluster count")
     initialModel = Some(model)
     this
@@ -205,11 +204,12 @@ class WeightedFuzzyCMeans private(
    * Train a Fuzzy C-means model on the given set of points; `data` should be cached for high
    * performance, because this is an iterative algorithm.
    */
-  def run(data: RDD[Vector]): FuzzyCMeansModel = {
+  def run(data: RDD[Vector]): WeightedFuzzyCMeansModel = {
 
     if (data.getStorageLevel == StorageLevel.NONE) {
-      logger.warn("The input data is not directly cached, which may hurt performance if its"
+      logWarning("The input data is not directly cached, which may hurt performance if its"
         + " parent RDDs are also uncached.")
+      
     }
 
     // Compute squared norms and cache them.
@@ -223,46 +223,39 @@ class WeightedFuzzyCMeans private(
 
     // Warn at the end of the run as well, for increased visibility.
     if (data.getStorageLevel == StorageLevel.NONE) {
-      logger.warn("The input data was not directly cached, which may hurt performance if its"
+      logWarning("The input data was not directly cached, which may hurt performance if its"
         + " parent RDDs are also uncached.")
     }
     model
   }
 
   /**
-   * Implementation of Fuzzy C-Means algorithm.
+   * Implementation of Weighted Fuzzy C-Means algorithm.
    */
-  private def runAlgorithm(data: RDD[VectorWithNorm]): FuzzyCMeansModel = {
+  private def runAlgorithm(data: RDD[VectorWithNorm]): WeightedFuzzyCMeansModel = {
 
     val sc = data.sparkContext
 
     val initStartTime = System.nanoTime()
 
     // Only one run is allowed when initialModel is given
-    val numRuns = if (initialModel.nonEmpty) {
-      if (runs > 1) logger.warn("Ignoring runs; one run is allowed when initialModel is given.")
-      1
-    } else {
-      runs
-    }
+    val numRuns = this.getRuns
 
-    // Centers initialization (random, ||)
-    // Array of Arrays of VectorWithNorms
-    // there is one array of centers per run (if more than one model is trained)
-    val centers = initialModel match {
-      case Some(kMeansCenters) =>
-        Array(kMeansCenters.clusterCenters.map(s => new VectorWithNorm(s)))
+    // Calculate centroids with FuzzyCMeans model
+    val fcm = FuzzyCMeans.train(data.map(_.vector), k = this.k,
+      maxIterations = this.maxIterations,
+      runs = this.runs,
+      this.initializationMode, seed = this.seed, m = this.m)
 
-      case None =>
-        if (initializationMode == KMeans.RANDOM) {
-          initRandom(data)
-        } else {
-          initKMeansParallel(data)
-        }
+    // Set centers
+    val centers = Array.fill(numRuns)(fcm.clusterCenters.map(s => new VectorWithNorm(s)))
 
-    }
+    // Weights initialization
+    var CentroidsWeights = ArrayBuffer.fill(numRuns, k)(1.0)
+
+
     val initTimeInSeconds = (System.nanoTime() - initStartTime) / 1e9
-    logger.info(s"Initialization with $initializationMode took " + "%.3f".format(initTimeInSeconds) +
+    logInfo(s"Initialization with $initializationMode took " + "%.3f".format(initTimeInSeconds) +
       " seconds.")
 
     // Initially all runs are active (active == true means the according run has not yet converged)
@@ -286,6 +279,7 @@ class WeightedFuzzyCMeans private(
     while (iteration < maxIterations && activeRuns.nonEmpty) {
 
       type WeightedPoint = (Vector, Double)
+
       // this is the function that will be used in the reduce phase
       def mergeContribs(x: WeightedPoint, y: WeightedPoint): WeightedPoint = {
         // y += a * x
@@ -303,6 +297,16 @@ class WeightedFuzzyCMeans private(
         acc
       })
 
+      // Membership for points.
+      // Accumulator per run per cluster
+      val weightsUpdateAccumulator = activeRuns.map(i => {
+        ArrayBuffer.fill(k){
+          val acc = new MembershipAccumulator(0.0)
+          sc.register(acc, f"MembershipAcc_${i}")
+          acc
+        }
+      })
+
       // broadcast the centers
       val bcActiveCenters = sc.broadcast(activeCenters)
 
@@ -312,7 +316,7 @@ class WeightedFuzzyCMeans private(
       // mapPartitions - Return a new RDD by applying a function to each partition of this RDD
       // reduceByKey - Merge the values for each key using an associative reduce function
       // Find the sum and count of points mapping to each center
-      val totalContribs = data.mapPartitions { points =>
+      val totalContribs = data.zipWithUniqueId.mapPartitions { points =>
 
         // we're inside the Spark magic now
         // one Array of centers per each active run
@@ -335,7 +339,10 @@ class WeightedFuzzyCMeans private(
         // Here we assign points to clusters
         // Compute the total cost (sum of distances), sum and count
 
-        points.foreach { point =>
+        points.foreach { pair =>
+
+          val (point, point_id) = pair
+
           (0 until runs).foreach { i =>
             // WE ARE IN THE CONTEXT OF A SPECIFIC RUN HERE
             val (mbrpDegree, distances) = WeightedFuzzyCMeans.degreesOfMembership(thisActiveCenters(i), point, m)
@@ -344,11 +351,21 @@ class WeightedFuzzyCMeans private(
               filter(_._1 > epsilon * epsilon).
               foreach { degreeWithIndex =>
                 val (deg, ind) = degreeWithIndex
+
+                val weight = CentroidsWeights(i)(ind)
+
                 // the total cost increases
-                costAccums(i).add(deg * distances(ind))
-                // add the current point to the cluster sum
+                // $J_m(U,v) = \sum \sum w_k (u_k)^m (d_ik)^2$
+                // use weights!
+                costAccums(i).add(deg * weight * distances(ind))
+
+                // (u_{ij}) * w_j
+                weightsUpdateAccumulator(i)(ind).add(CentroidsWeights(i)(ind) * deg)
+                // add the current point to the  cluster sum
                 val sum = sums(i)(ind)
-                axpy(deg, point.vector, sum)
+                // use weights!
+                // cluster centroid
+                axpy(deg * weight, point.vector, sum)
                 // increase point count for current cluster
                 fuzzyCounts(i)(ind) += deg
               }
@@ -393,7 +410,7 @@ class WeightedFuzzyCMeans private(
         if (!changed) {
           // Kill the run that converged already
           active(run) = false
-          logger.info("Run " + run + " finished in " + (iteration + 1) + " iterations")
+          logInfo("Run " + run + " finished in " + (iteration + 1) + " iterations")
         }
         costs(run) = costAccums(i).value
       }
@@ -401,24 +418,29 @@ class WeightedFuzzyCMeans private(
       // remove runs no longer active (active switches to false if there are no changes
       // between 2 successive iterations)
       activeRuns = activeRuns.filter(active(_))
-      // increase number of iterations
+
+      // update weights
+      CentroidsWeights = weightsUpdateAccumulator.map(_.map(_.value))
+
+        // increase number of iterations
       iteration += 1
+
     }
 
     val iterationTimeInSeconds = (System.nanoTime() - iterationStartTime) / 1e9
-    logger.info(s"Iterations took " + "%.3f".format(iterationTimeInSeconds) + " seconds.")
+    logInfo(s"Iterations took " + "%.3f".format(iterationTimeInSeconds) + " seconds.")
 
     if (iteration == maxIterations) {
-      logger.info(s"KMeans reached the max number of iterations: $maxIterations.")
+      logInfo(s"KMeans reached the max number of iterations: $maxIterations.")
     } else {
-      logger.info(s"KMeans converged in $iteration iterations.")
+      logInfo(s"KMeans converged in $iteration iterations.")
     }
 
     val (minCost, bestRun) = costs.zipWithIndex.min
 
-    logger.info(s"The cost for the best run is $minCost.")
+    logInfo(s"The cost for the best run is $minCost.")
 
-    new FuzzyCMeansModel(centers(bestRun).map(_.vector), m)
+    new WeightedFuzzyCMeansModel(centers(bestRun).map(_.vector), m)
   }
 
   /**
@@ -543,7 +565,7 @@ class WeightedFuzzyCMeans private(
 
 
 /**
- * Top-level methods for calling Fuzzy C-means clustering.
+ * Top-level methods for calling Weighted Fuzzy C-means clustering.
  */
 object WeightedFuzzyCMeans {
 
@@ -553,7 +575,7 @@ object WeightedFuzzyCMeans {
   val K_MEANS_PARALLEL = "k-means||"
 
   /**
-   * Trains a fuzzy c-means model using the given set of parameters.
+   * Trains a Weighted fuzzy c-means model using the given set of parameters.
    *
    * @param data               training points stored as `RDD[Vector]`
    * @param k                  number of clusters
@@ -570,7 +592,7 @@ object WeightedFuzzyCMeans {
              runs: Int,
              initializationMode: String,
              seed: Long,
-             m: Double): FuzzyCMeansModel = {
+             m: Double): WeightedFuzzyCMeansModel = {
     new WeightedFuzzyCMeans().setK(k)
       .setMaxIterations(maxIterations)
       .setRuns(runs)
@@ -596,7 +618,7 @@ object WeightedFuzzyCMeans {
              maxIterations: Int,
              runs: Int,
              initializationMode: String,
-             seed: Long): FuzzyCMeansModel = {
+             seed: Long): WeightedFuzzyCMeansModel = {
     new WeightedFuzzyCMeans().setK(k)
       .setMaxIterations(maxIterations)
       .setRuns(runs)
@@ -619,7 +641,7 @@ object WeightedFuzzyCMeans {
              k: Int,
              maxIterations: Int,
              runs: Int,
-             initializationMode: String): FuzzyCMeansModel = {
+             initializationMode: String): WeightedFuzzyCMeansModel = {
     new WeightedFuzzyCMeans().setK(k)
       .setMaxIterations(maxIterations)
       .setRuns(runs)
@@ -633,7 +655,7 @@ object WeightedFuzzyCMeans {
   def train(
              data: RDD[Vector],
              k: Int,
-             maxIterations: Int): FuzzyCMeansModel = {
+             maxIterations: Int): WeightedFuzzyCMeansModel = {
     train(data, k, maxIterations, 1, K_MEANS_PARALLEL)
   }
 
@@ -650,7 +672,7 @@ object WeightedFuzzyCMeans {
              k: Int,
              m: Double,
              maxIterations: Int
-           ): FuzzyCMeansModel = {
+           ): WeightedFuzzyCMeansModel = {
     new WeightedFuzzyCMeans().setK(k)
       .setMaxIterations(maxIterations)
       .setK(k)
@@ -665,7 +687,7 @@ object WeightedFuzzyCMeans {
              data: RDD[Vector],
              k: Int,
              maxIterations: Int,
-             runs: Int): FuzzyCMeansModel = {
+             runs: Int): WeightedFuzzyCMeansModel = {
     train(data, k, maxIterations, runs, K_MEANS_PARALLEL)
   }
 
@@ -767,34 +789,18 @@ object WeightedFuzzyCMeans {
   }
 }
 
-/**
- * A vector with its norm for fast distance computation.
- *
- * @see [[org.apache.spark.mllib.clustering.KMeans#fastSquaredDistance]]
- */
-private[clustering]
-class VectorWithNorm(val vector: Vector, val norm: Double) extends Serializable {
-
-  def this(vector: Vector) = this(vector, Vectors.norm(vector, 2.0))
-
-  def this(array: Array[Double]) = this(Vectors.dense(array))
-
-  /** Converts the vector to a dense vector. */
-  def toDense: VectorWithNorm = new VectorWithNorm(Vectors.dense(vector.toArray), norm)
-}
-
 
 private[clustering]
-class CostAccumulator(private var sum: Double = 0) extends AccumulatorV2[Double, Double] {
+class MembershipAccumulator(private var sum: Double = 0) extends AccumulatorV2[Double, Double] {
 
   override def isZero: Boolean = sum == 0
 
   override def copy(): AccumulatorV2[Double, Double] = {
 
-    val newCostAcc = new CostAccumulator()
+    val newMembershipAcc = new MembershipAccumulator()
 
-    newCostAcc.sum = this.sum
-    newCostAcc
+    newMembershipAcc.sum = this.sum
+    newMembershipAcc
   }
 
   override def reset(): Unit = sum = 0
