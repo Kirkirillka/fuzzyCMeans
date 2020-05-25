@@ -123,7 +123,7 @@ class WeightedFuzzyCMeans private(
    * :: Experimental ::
    * Number of runs of the algorithm to execute in parallel.
    */
-  @deprecated("Support for runs is deprecated. This param will have no effect in 1.7.0.", "1.6.0")
+  // @deprecated("Support for runs is deprecated. This param will have no effect in 1.7.0.", "1.6.0")
   def getRuns: Int = runs
 
   /**
@@ -238,7 +238,7 @@ class WeightedFuzzyCMeans private(
 
     val initStartTime = System.nanoTime()
 
-    // Only one run is allowed when initialModel is given
+    // Don't care, use any runs
     val numRuns = this.getRuns
 
     // Calculate centroids with FuzzyCMeans model
@@ -247,12 +247,13 @@ class WeightedFuzzyCMeans private(
       runs = this.runs,
       this.initializationMode, seed = this.seed, m = this.m)
 
-    // Set centers
+    // Set initial centers from FCM
+    // the same centers per each run
     val centers = Array.fill(numRuns)(fcm.clusterCenters.map(s => new VectorWithNorm(s)))
 
-    // Weights initialization
-    var CentroidsWeights = ArrayBuffer.fill(numRuns, k)(1.0)
-
+    // Beginning centroid weights initialization
+    // The same weights per each run
+    var CentroidsWeights = ArrayBuffer.fill(numRuns,k)(1.0)
 
     val initTimeInSeconds = (System.nanoTime() - initStartTime) / 1e9
     logInfo(s"Initialization with $initializationMode took " + "%.3f".format(initTimeInSeconds) +
@@ -360,7 +361,7 @@ class WeightedFuzzyCMeans private(
                 costAccums(i).add(deg * weight * distances(ind))
 
                 // (u_{ij}) * w_j
-                weightsUpdateAccumulator(i)(ind).add(CentroidsWeights(i)(ind) * deg)
+                weightsUpdateAccumulator(i)(ind).add(weight * deg)
                 // add the current point to the  cluster sum
                 val sum = sums(i)(ind)
                 // use weights!

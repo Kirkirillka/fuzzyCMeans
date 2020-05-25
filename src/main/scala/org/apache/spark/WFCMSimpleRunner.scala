@@ -24,7 +24,7 @@ object WFCMSimpleRunner {
     )
     val rdd = sc.parallelize(points, 3).cache()
 
-    val model = WeightedFuzzyCMeans.train(rdd, k = 5, maxIterations = 1000, runs = 1)
+    val model = WeightedFuzzyCMeans.train(rdd, k = 2, maxIterations = 1000, runs = 1)
 
     val fuzzyPredicts = model.fuzzyPredict(rdd).collect()
 
