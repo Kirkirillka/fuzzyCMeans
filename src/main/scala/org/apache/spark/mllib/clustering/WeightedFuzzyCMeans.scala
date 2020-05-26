@@ -254,16 +254,19 @@ class WeightedFuzzyCMeans private(
 
     // Beginning centroid weights initialization
     // The same weights per each run
-    val initCentroidsWeight = fcm.fuzzyPredict(
-      data.map(_.vector))
-      .map(point => {
-        Vectors.dense(point.map(_._2).toArray)
-      }).map(r =>
+    val initCentroidsWeight = initialModel match {
+      case Some(wfcm) => wfcm.weights.toArray
+      case _ => fcm.fuzzyPredict(
+        data.map(_.vector))
+        .map(point => {
+          Vectors.dense(point.map(_._2).toArray)
+        }).map(r =>
         r
       ).reduce { (a, b) =>
         axpy(1.0, a, b)
         b
       }.toArray
+    }
 
     var CentroidsWeights = ArrayBuffer.fill(numRuns)(initCentroidsWeight)
 
@@ -588,6 +591,33 @@ object WeightedFuzzyCMeans {
   val RANDOM = "random"
   @Since("0.8.0")
   val K_MEANS_PARALLEL = "k-means||"
+
+
+  /**
+   * Trains a Weighted fuzzy c-means model using the given set of parameters.
+   *
+   * @param data               training points stored as `RDD[Vector]`
+   * @param k                  number of clusters
+   * @param maxIterations      max number of iterations
+   * @param runs               number of parallel runs, defaults to 1. The best model is returned.
+   * @param initializationMode initialization model, either "random" or "k-means||" (default).
+   * @param initialModel        initial WFCM model for weight initialization
+   * @param seed               random seed value for cluster initialization
+   * @param m                  fuzzyfier, between 1 and infinity, default is 2, 1 leads to hard clustering
+   */
+  def train(
+             data: RDD[Vector],
+             k: Int,
+             maxIterations: Int,
+             runs: Int,
+             initialModel: WeightedFuzzyCMeansModel): WeightedFuzzyCMeansModel = {
+    new WeightedFuzzyCMeans().setK(k)
+      .setMaxIterations(maxIterations)
+      .setRuns(runs)
+      .setInitialModel(initialModel)
+      .run(data)
+  }
+
 
   /**
    * Trains a Weighted fuzzy c-means model using the given set of parameters.

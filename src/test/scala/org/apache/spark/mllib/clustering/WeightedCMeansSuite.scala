@@ -64,6 +64,31 @@ class WeightedFuzzyCMeansSuite extends SparkFunSuite with MLlibTestSparkContext 
     }
   }
 
+
+
+  test("use pre trained model as initial") {
+    val points = Seq(
+      Vectors.dense(0.0, 0.0),
+      Vectors.dense(0.0, 0.1),
+      Vectors.dense(0.1, 0.0),
+      Vectors.dense(9.0, 0.0),
+      Vectors.dense(9.0, 0.2),
+      Vectors.dense(9.2, 0.0)
+    )
+    val rdd = sc.parallelize(points, 3).cache()
+
+    val pre_model = WeightedFuzzyCMeans.train(rdd, k = 2, maxIterations = 10, runs = 10)
+
+    val model = WeightedFuzzyCMeans.train(rdd, k = 2, maxIterations = 10, runs = 10, pre_model)
+
+
+    val fuzzyPredicts_pre = model.fuzzyPredict(rdd).collect()
+    val fuzzyPredicts = model.fuzzyPredict(rdd).collect()
+
+    assert(fuzzyPredicts_pre.length === fuzzyPredicts.length)
+  }
+
+
   test("more clusters than points") {
     val data = sc.parallelize(
       Array(
@@ -190,7 +215,7 @@ object WeightedFuzzyCSuite extends SparkFunSuite {
       case _ =>
         Vectors.dense(Array.fill[Double](dim)(0.0))
     }
-    new WeightedFuzzyCMeansModel(Array.fill[Vector](k)(singlePoint), 2)
+    new WeightedFuzzyCMeansModel(Array.fill[Vector](k)(singlePoint),Vectors.dense(Array.fill(k)(1.0)), 2)
   }
 
   def checkEqual(a: WeightedFuzzyCMeansModel, b: WeightedFuzzyCMeansModel): Unit = {
