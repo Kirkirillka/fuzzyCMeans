@@ -247,8 +247,6 @@ class WeightedFuzzyCMeans private(
       runs = this.runs,
       this.initializationMode, seed = this.seed, m = this.m)
 
-    // Size of data, use to divide by number of data row
-    val dataSize = data.collect().length
 
     // Set initial centers from FCM
     // the same centers per each run
@@ -265,7 +263,7 @@ class WeightedFuzzyCMeans private(
       ).reduce { (a, b) =>
         axpy(1.0, a, b)
         b
-      }.toArray.map(_ / dataSize )
+      }.toArray
 
     var CentroidsWeights = ArrayBuffer.fill(numRuns)(initCentroidsWeight)
 
@@ -412,7 +410,9 @@ class WeightedFuzzyCMeans private(
           if (fuzzyCount != 0) {
             // x = a * x - multiplies a vector with a scalar
             // Compute new center
-            scal(1.0 / fuzzyCount, sum)
+            // Include centroid weights in "weight" composition
+            val weight = CentroidsWeights(i)(j)
+            scal(1.0 / (fuzzyCount * weight), sum)
             val newCenter = new VectorWithNorm(sum)
             // Changed - (distance greater than epsilon squared)
             if (WeightedFuzzyCMeans.fastSquaredDistance(newCenter, centers(run)(j)) > epsilon * epsilon) {
@@ -455,7 +455,7 @@ class WeightedFuzzyCMeans private(
 
     logInfo(s"The cost for the best run is $minCost.")
 
-    new WeightedFuzzyCMeansModel(centers(bestRun).map(_.vector), m)
+    new WeightedFuzzyCMeansModel(centers(bestRun).map(_.vector), Vectors.dense(CentroidsWeights(bestRun).toArray), m)
   }
 
   /**

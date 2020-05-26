@@ -28,13 +28,14 @@ import scala.collection.JavaConverters._
  * A clustering model for Fuzzy C-means. Each point to each cluster with a certain degree of probability
  */
 class WeightedFuzzyCMeansModel(val clusterCenters: Array[Vector],
+                               val weights: Vector,
                                val m: Double = 2.0)
   extends Serializable with PMMLExportable {
 
   /**
    * A Java-friendly constructor that takes an Iterable of Vectors.
    */
-  def this(centers: java.lang.Iterable[Vector]) = this(centers.asScala.toArray)
+  def this(centers: java.lang.Iterable[Vector], weights: Vector) = this(centers.asScala.toArray, weights)
 
   /**
    * Total number of clusters.
