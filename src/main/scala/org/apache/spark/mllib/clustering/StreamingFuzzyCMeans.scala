@@ -291,11 +291,20 @@ class StreamingFuzzyCMeans private(
 
       type WeightedPoint = (Vector, Double)
 
+      // poweredSumContib = sum{k=1}{n} sumContrib
+      def PowerSum(x: WeightedPoint) = {
+        (Vectors.dense(x._1.toArray.map(Math.pow(_,1-m))), x._2)
+      }
+
       // this is the function that will be used in the reduce phase
       def mergeContribs(x: WeightedPoint, y: WeightedPoint): WeightedPoint = {
         // y += a * x
         // - in this case y += x
-        axpy(1.0, x._1, y._1)
+
+        // First power sumContrib and sum up each poweredSumContib
+        val x_powered = PowerSum(x)
+        val y_powered = PowerSum(y)
+        axpy(1.0, x_powered._1, y_powered._1)
         (y._1, x._2 + y._2)
       }
 
@@ -370,7 +379,7 @@ class StreamingFuzzyCMeans private(
                 // the total cost increases
                 // $J_m(U,v) = \sum \sum w_k (u_k)^m (d_ik)^2$
                 // use weights!
-                costAccums(i).add(deg * weight * distances(ind))
+                costAccums(i).add(weight * distances(ind))
 
                 // (u_{ij}) * w_j
                 weightsUpdateAccumulator(i)(ind).add(weight * deg)
@@ -402,7 +411,7 @@ class StreamingFuzzyCMeans private(
                   // the total cost increases
                   // $J_m(U,v) = \sum \sum w_k (u_k)^m (d_ik)^2$
                   // use weights!
-                  costAccums(i).add(deg * weight * distances(ind))
+                  costAccums(i).add(weight * distances(ind))
 
                   // add the current point to the  cluster sum
                   val sum = sums(i)(ind)
@@ -453,10 +462,6 @@ class StreamingFuzzyCMeans private(
             scal(1.0 / (fuzzyCount * weight), sum)
             val newCenter = new VectorWithNorm(sum)
             // Changed - (distance greater than epsilon squared)
-
-            if ( !Array(newCenter, centers(run)(j)).forall(_.norm>=0)) {
-              println("danger")
-            }
 
             if (StreamingFuzzyCMeans.fastSquaredDistance(newCenter, centers(run)(j)) > epsilon * epsilon) {
               changed = true
@@ -656,11 +661,11 @@ object StreamingFuzzyCMeans {
              data: RDD[Vector],
              k: Int,
              maxIterations: Int,
-             runs: Int,
              initialModel: ArrayBuffer[StreamingFuzzyCMeansModel]): StreamingFuzzyCMeansModel = {
     new StreamingFuzzyCMeans().setK(k)
       .setMaxIterations(maxIterations)
-      .setRuns(runs)
+      // Workaround, has no meaning to run more than once for predefined model
+      .setRuns(1)
       .setInitialModel(initialModel)
       .run(data)
   }
@@ -842,8 +847,8 @@ object StreamingFuzzyCMeans {
         // Standard formula
         // $w_{ij} = \frac{1}{\sum...}
 
-        // pow = \frac{2}{m-1}
-        val pow = 2.0 / (fuzzifier - 1.0)
+        // pow = \frac{1}{1-m}
+        val pow = 1 / (1.0 - fuzzifier)
         // d = \sum{k=1}{c}(\frac{||x_i - c_j||}{||x_i - c_l||})
         val denom = distances.foldLeft(0.0)((sum, dik) => sum + Math.pow(1 / dik, pow))
 
