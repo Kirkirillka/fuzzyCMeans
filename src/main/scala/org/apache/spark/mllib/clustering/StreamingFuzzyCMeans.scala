@@ -32,11 +32,10 @@ import scala.collection.mutable.ArrayBuffer
 
 /**
  *
- * Weighted Fuzzy C-Means is a modification of FCM.
+ * Streaming Fuzzy C-Means is a modification of FCM.
  *
  * @param k                   number of clusters
  * @param maxIterations       max number of iterations
- * @param runs                number of parallel runs, defaults to 1. The best model is returned.
  * @param initializationMode  initialization model, either "random" or "k-means||" (default).
  * @param initializationSteps Number of steps for the k-means|| initialization mode
  * @param epsilon             Threshold in membership values to consider convergence
@@ -46,7 +45,6 @@ class StreamingFuzzyCMeans private(
                                     private var k: Int,
                                     private var m: Double,
                                     private var maxIterations: Int,
-                                    private var runs: Int,
                                     private var initializationMode: String,
                                     private var initializationSteps: Int,
                                     private var epsilon: Double,
@@ -54,10 +52,10 @@ class StreamingFuzzyCMeans private(
 
 
   /**
-   * Constructs a FuzzyCMeans instance with default parameters: {k: 2, m: 2, maxIterations: 20, runs: 1,
+   * Constructs a StreamingFuzzyCMeans instance with default parameters: {k: 2, m: 2, maxIterations: 20, runs: 1,
    * initializationMode: "k-means||", initializationSteps: 5, epsilon: 1e-4, seed: random}.
    */
-  def this() = this(2, 2, 20, 1, KMeans.K_MEANS_PARALLEL, 5, 1e-4, Utils.random.nextLong())
+  def this() = this(2, 2, 1, KMeans.K_MEANS_PARALLEL, 5, 1e-4, Utils.random.nextLong())
 
   /**
    * Number of clusters to create (k).
@@ -119,27 +117,6 @@ class StreamingFuzzyCMeans private(
     this
   }
 
-  /**
-   * :: Experimental ::
-   * Number of runs of the algorithm to execute in parallel.
-   */
-  // @deprecated("Support for runs is deprecated. This param will have no effect in 1.7.0.", "1.6.0")
-  def getRuns: Int = runs
-
-  /**
-   * :: Experimental ::
-   * Set the number of runs of the algorithm to execute in parallel. We initialize the algorithm
-   * this many times with random starting conditions (configured by the initialization mode), then
-   * return the best clustering found over any run. Default: 1.
-   */
-  @deprecated("Support for runs is deprecated. This param will have no effect in 1.7.0.", "1.6.0")
-  def setRuns(runs: Int): this.type = {
-    if (runs <= 0) {
-      throw new IllegalArgumentException("Number of runs must be positive")
-    }
-    this.runs = runs
-    this
-  }
 
   /**
    * Number of steps for the k-means|| initialization mode
@@ -160,12 +137,12 @@ class StreamingFuzzyCMeans private(
 
   /**
    * The distance threshold within which we've consider centers to have converged.
+   * In SFCM used just to filer out low membership
    */
   def getEpsilon: Double = epsilon
 
   /**
    * Set the distance threshold within which we've consider centers to have converged.
-   * If all centers move less than this Euclidean distance, we stop iterating one run.
    */
   def setEpsilon(epsilon: Double): this.type = {
     this.epsilon = epsilon
@@ -185,8 +162,8 @@ class StreamingFuzzyCMeans private(
     this
   }
 
-  // Initial cluster centers can be provided as a KMeansModel object rather than using the
-  // random or k-means|| initializationMode
+  // Initial cluster centers can be provided as a set of mutable ArrayBuffer of  StreamingFuzzyCMeansModel object
+  // rather than using the random or k-means|| initializationMode
   private var initialModel: Option[ArrayBuffer[StreamingFuzzyCMeansModel]] = None
 
   /**
@@ -201,7 +178,7 @@ class StreamingFuzzyCMeans private(
   }
 
   /**
-   * Train a Fuzzy C-means model on the given set of points; `data` should be cached for high
+   * Train a Streaming Fuzzy C-means model on the given set of points; `data` should be cached for high
    * performance, because this is an iterative algorithm.
    */
   def run(data: RDD[Vector]): StreamingFuzzyCMeansModel = {
@@ -230,7 +207,7 @@ class StreamingFuzzyCMeans private(
   }
 
   /**
-   * Implementation of Weighted Fuzzy C-Means algorithm.
+   * Implementation of Streaming Fuzzy C-Means algorithm.
    */
   private def runAlgorithm(data: RDD[VectorWithNorm]): StreamingFuzzyCMeansModel = {
 
@@ -238,56 +215,48 @@ class StreamingFuzzyCMeans private(
 
     val initStartTime = System.nanoTime()
 
-    // Don't care, use any runs
-    val numRuns = this.getRuns
 
     val historicalModels = initialModel match {
-      case Some(models) => models
+      case Some(models) => {
+        models
+      }
       case None => ArrayBuffer.empty[StreamingFuzzyCMeansModel]
     }
 
-    // Set initial centers from FCM
-    // the same centers per each run
-    val centers = historicalModels match {
-      case models if models.nonEmpty => {
-        val initCenters = models.last.clusterCenters.map(s => new VectorWithNorm(s))
-        Array.fill(numRuns)(initCenters)
-      }
-      case _ => initRandom(data)
+    // use centroids from history
+    // or initialize them randomlu or with kmeans||
+    val centroids = historicalModels match {
+      case models if models.nonEmpty => models.last.clusterCenters.map(s => new VectorWithNorm(s))
+      case _ =>
+        if (initializationMode == KMeans.RANDOM) {
+          initRandom(data)
+        } else {
+          initKMeansParallel(data)
+        }
     }
 
     // Beginning centroid weights initialization
-    // The same weights per each run
-    val initCentroidsWeight = historicalModels match {
+    var centroidWeights = historicalModels match {
       case models if models.nonEmpty => models.last.weights.toArray
       case _ => Array.fill(k)(1.0)
     }
 
-    var CentroidsWeights = ArrayBuffer.fill(numRuns)(initCentroidsWeight)
 
     val initTimeInSeconds = (System.nanoTime() - initStartTime) / 1e9
     logInfo(s"Initialization with $initializationMode took " + "%.3f".format(initTimeInSeconds) +
       " seconds.")
 
-    // Initially all runs are active (active == true means the according run has not yet converged)
-    // Also Array of Arrays
-    val active = Array.fill(numRuns)(true)
-    // Initially the costs are 0.0 for all runs
-    // Also Array of Arrays
-    val costs = Array.fill(numRuns)(0.0)
-
-    // 0, 1, 2, .... nunRuns-1 - ArrayBuffer containing the remaining active runs
-    // Initially it contains all the runs
-    var activeRuns = new ArrayBuffer[Int] ++ (0 until numRuns)
     var iteration = 0
+
+    val allCenterConverged = ArrayBuffer.fill(k)(false)
 
     val iterationStartTime = System.nanoTime()
 
     // Stop condition is given by
-    // - no more active runs (all runs converged)
+    // - delta between newCenter and center on previous step is below threshold - centroids converged
     // - maximum number of iterations reached
     // Execute iterations of Lloyd's algorithm until all runs have converged
-    while (iteration < maxIterations && activeRuns.nonEmpty) {
+    while (iteration < maxIterations && !allCenterConverged.forall(_ == true)) {
 
       type WeightedPoint = (Vector, Double)
 
@@ -299,27 +268,19 @@ class StreamingFuzzyCMeans private(
         (y._1, x._2 + y._2)
       }
 
-      // the centers for each run still active
-      val activeCenters = activeRuns.map(r => centers(r)).toArray
-      // the cost for each run - one accumulator per run
-      val costAccums = activeRuns.map(i => {
-        val acc = new CostAccumulator(0.0)
-        sc.register(acc, f"CostAcc_${i}")
-        acc
-      })
+      val costAccum = new CostAccumulator(0.0)
+      sc.register(costAccum, f"CostAcc")
 
       // Membership for points.
       // Accumulator per run per cluster
-      val weightsUpdateAccumulator = activeRuns.map(i => {
-        Array.fill(k) {
-          val acc = new MembershipAccumulator(1.0)
-          sc.register(acc, f"MembershipAcc_${i}")
-          acc
-        }
-      })
+      val weightsUpdateAccumulator = Array.fill(k) {
+        val acc = new MembershipAccumulator(1.0)
+        sc.register(acc, f"MembershipAcc")
+        acc
+      }
 
       // broadcast the centers
-      val bcActiveCenters = sc.broadcast(activeCenters)
+      val bcActiveCenters = sc.broadcast(centroids)
 
       // broadcast the fuzzifier
       val bcM = sc.broadcast(m)
@@ -332,19 +293,15 @@ class StreamingFuzzyCMeans private(
         // we're inside the Spark magic now
         // one Array of centers per each active run
         val thisActiveCenters = bcActiveCenters.value
-        // how many runs are still active
-        val runs = thisActiveCenters.length
-        // how many clusters are needed (k)
-        val k = thisActiveCenters(0).length
         // the space dimension (number of coordinates)
-        val dims = thisActiveCenters(0)(0).vector.size
+        val dims = thisActiveCenters(0).vector.size
         // the level of cluster fuzziness
         val m = bcM.value
 
         // sums are zero (per runs per each dimension)
-        val sums = Array.fill(runs, k)(Vectors.zeros(dims))
+        val sums = Array.fill(k)(Vectors.zeros(dims))
         // fuzzyCounts are zero  (per run per each dimension)
-        val fuzzyCounts = Array.fill(runs, k)(0.0)
+        val fuzzyCounts = Array.fill(k)(0.0)
 
         // ++++++++++++++++++++++++++++++++++++++++++++++++++++++
         // Here we assign points to clusters
@@ -352,143 +309,119 @@ class StreamingFuzzyCMeans private(
 
         points.foreach { pair =>
 
-          val (point, point_id) = pair
+          val (point, _) = pair
 
-          (0 until runs).foreach { i =>
-            // WE ARE IN THE CONTEXT OF A SPECIFIC RUN HERE
+          // First do for the current model
+          val (mbrpDegree, distances) = StreamingFuzzyCMeans.degreesOfMembership(thisActiveCenters, point, m)
+          // compute membership based cost - ignore "almost zeros"
+          mbrpDegree.zipWithIndex.
+            filter(_._1 > epsilon * epsilon).
+            foreach { degreeWithIndex =>
+              val (deg, ind) = degreeWithIndex
 
-            // First do for the current model
-            val (mbrpDegree, distances) = StreamingFuzzyCMeans.degreesOfMembership(thisActiveCenters(i), point, m)
+              val weight = centroidWeights(ind)
+
+              // the total cost increases
+              // $J_m(U,v) = \sum \sum w_k (u_k)^m (d_ik)^2$
+              // use weights!
+              costAccum.add(deg * weight * distances(ind))
+
+              // (u_{ij}) * w_j
+              weightsUpdateAccumulator(ind).add(weight * deg)
+              // add the current point to the  cluster sum
+              val sum = sums(ind)
+              // use weights!
+              // cluster centroid
+              axpy(deg * weight, point.vector, sum)
+              // increase point count for current cluster
+              fuzzyCounts(ind) += deg
+            }
+
+
+          // Then for each historical model
+          historicalModels.foreach(model => {
+
+            val histModelClusterCenters = model.clusterCenters.map(new VectorWithNorm(_))
+            val histModelClusterWeights = model.weights.toArray
+
+            val (mbrpDegree, distances) = StreamingFuzzyCMeans.degreesOfMembership(histModelClusterCenters, point, m)
             // compute membership based cost - ignore "almost zeros"
             mbrpDegree.zipWithIndex.
               filter(_._1 > epsilon * epsilon).
               foreach { degreeWithIndex =>
                 val (deg, ind) = degreeWithIndex
 
-                val weight = CentroidsWeights(i)(ind)
+                val weight = histModelClusterWeights(ind)
 
                 // the total cost increases
                 // $J_m(U,v) = \sum \sum w_k (u_k)^m (d_ik)^2$
                 // use weights!
-                costAccums(i).add(deg * weight * distances(ind))
+                costAccum.add(deg * weight * distances(ind))
 
-                // (u_{ij}) * w_j
-                weightsUpdateAccumulator(i)(ind).add(weight * deg)
-                // add the current point to the  cluster sum
-                val sum = sums(i)(ind)
+                // add the current point to the cluster sum
+                val sum = sums(ind)
                 // use weights!
                 // cluster centroid
                 axpy(deg * weight, point.vector, sum)
                 // increase point count for current cluster
-                fuzzyCounts(i)(ind) += deg
+                fuzzyCounts(ind) += deg
               }
+          })
 
-
-            // Then for each historical model
-            historicalModels.foreach(model => {
-
-              val histModelClusterCenters = model.clusterCenters.map(new VectorWithNorm(_))
-              val histModelClusterWeights = model.weights.toArray
-
-              val (mbrpDegree, distances) = StreamingFuzzyCMeans.degreesOfMembership(histModelClusterCenters, point, m)
-              // compute membership based cost - ignore "almost zeros"
-              mbrpDegree.zipWithIndex.
-                filter(_._1 > epsilon * epsilon).
-                foreach { degreeWithIndex =>
-                  val (deg, ind) = degreeWithIndex
-
-                  val weight = histModelClusterWeights(ind)
-
-                  // the total cost increases
-                  // $J_m(U,v) = \sum \sum w_k (u_k)^m (d_ik)^2$
-                  // use weights!
-                  costAccums(i).add(deg * weight * distances(ind))
-
-                  // add the current point to the  cluster sum
-                  val sum = sums(i)(ind)
-                  // use weights!
-                  // cluster centroid
-                  axpy(deg * weight, point.vector, sum)
-                  // increase point count for current cluster
-                  fuzzyCounts(i)(ind) += deg
-                }
-            })
-
-          }
         }
 
         // ++++++++++++++++++++++++++++++++++++++++++++++++++++++
 
         // For every run and every cluster the sum and count are emitted
-        val contribs = for (i <- 0 until runs; j <- 0 until k) yield {
-          ((i, j), (sums(i)(j), fuzzyCounts(i)(j)))
+        val contribs = for (j <- 0 until k) yield {
+          (j, (sums(j), fuzzyCounts(j)))
         }
         contribs.iterator
-        // The key is a combination of run and cluster
+        // The key is a combination of cluster
         // reduceByKey computes the values across clusters (sum and count)
       }.reduceByKey(mergeContribs).collectAsMap()
 
-      // At this point, for each run, each cluster,
+      // At this point each cluster,
       // we know the sum of vectors and the number of points
       bcActiveCenters.unpersist(blocking = false)
 
-      // Update the cluster centers and costs for each active run
+      var j = 0
+      // For each cluster
+      while (j < k) {
+        val (sum, fuzzyCount) = totalContribs(j)
+        // if any points in the cluster or not converged
+        if (fuzzyCount != 0 && !allCenterConverged(j)) {
+          // x = a * x - multiplies a vector with a scalar
+          // Compute new center
+          // Include centroid weights in "weight" composition
+          val weight = centroidWeights(j)
+          scal(1.0 / (fuzzyCount * weight), sum)
+          val newCenter = new VectorWithNorm(sum)
 
-      if(historicalModels.length>=2){
-        println("danger")
-      }
+          // Safe check
+          if (! (newCenter.norm >= 0.0)) {
+            logDebug(s"Iteration $iteration. New center is too heavy, weights are going to  infinity. " +
+              s"Marks as converged")
+            allCenterConverged(j) = true
+          } else {
 
-      for ((run, i) <- activeRuns.zipWithIndex) {
 
-        var changed = false
-        var j = 0
-        // For each cluster
-        while (j < k) {
-          val (sum, fuzzyCount) = totalContribs((i, j))
-          if (fuzzyCount != 0) {
-            // x = a * x - multiplies a vector with a scalar
-            // Compute new center
-            // Include centroid weights in "weight" composition
-            val weight = CentroidsWeights(i)(j)
-            scal(1.0 / (fuzzyCount * weight), sum)
-            val newCenter = new VectorWithNorm(sum)
-            // Changed - (distance greater than epsilon squared)
-
-            if ( !Array(newCenter, centers(run)(j)).forall(_.norm>=0)) {
-              println("danger")
+            if (StreamingFuzzyCMeans.fastSquaredDistance(newCenter, centroids(j)) < epsilon * epsilon) {
+              allCenterConverged(j) = true
             }
 
-            if (StreamingFuzzyCMeans.fastSquaredDistance(newCenter, centers(run)(j)) > epsilon * epsilon) {
-              changed = true
-            }
-            centers(run)(j) = newCenter
+            centroids(j) = newCenter
           }
-          j += 1
         }
-        if (!changed) {
-          // Kill the run that converged already
-          active(run) = false
-          logInfo("Run " + run + " finished in " + (iteration + 1) + " iterations")
-        }
-        costs(run) = costAccums(i).value
-
-        // update weights
-        CentroidsWeights(run) = weightsUpdateAccumulator(i).map(_.value)
-
-        if ( !CentroidsWeights.forall(_.forall(_>0))) {
-          println("danger")
-        }
-
+        j += 1
       }
+      // cost = costAccum.value
 
-      // remove runs no longer active (active switches to false if there are no changes
-      // between 2 successive iterations)
-      activeRuns = activeRuns.filter(active(_))
+      // update weights
+      centroidWeights = weightsUpdateAccumulator.map(_.value)
 
       // increase number of iterations
       iteration += 1
-
-
 
     }
 
@@ -501,27 +434,14 @@ class StreamingFuzzyCMeans private(
       logInfo(s"KMeans converged in $iteration iterations.")
     }
 
-    val (minCost, bestRun) = costs.zipWithIndex.min
-
-    logInfo(s"The cost for the best run is $minCost.")
-
-
-    new StreamingFuzzyCMeansModel(centers(bestRun).map(_.vector), Vectors.dense(CentroidsWeights(bestRun)), historicalModels)
-
-    //new StreamingFuzzyCMeansModel(centers(bestRun).map(_.vector), Vectors.dense(CentroidsWeights(bestRun).toArray),historicalModels, m)
+    new StreamingFuzzyCMeansModel(centroids.map(_.vector), Vectors.dense(centroidWeights), historicalModels)
   }
 
   /**
    * Initialize `runs` sets of cluster centers at random.
    */
-  private def initRandom(data: RDD[VectorWithNorm])
-  : Array[Array[VectorWithNorm]] = {
-    // Sample all the cluster centers in one pass to avoid repeated scans
-    val sample = data.takeSample(withReplacement = true, runs * k, new XORShiftRandom(this.seed).nextInt()).toSeq
-    Array.tabulate(runs)(r => sample.slice(r * k, (r + 1) * k).map { v =>
-      new VectorWithNorm(Vectors.dense(v.vector.toArray), v.norm)
-    }.toArray)
-  }
+  private def initRandom(data: RDD[VectorWithNorm]): Array[VectorWithNorm] =
+    data.takeSample(withReplacement = true, k, new XORShiftRandom(this.seed).nextInt()).toArray
 
   /**
    * Initialize `runs` sets of cluster centers using the k-means|| algorithm by Bahmani et al.
@@ -533,20 +453,20 @@ class StreamingFuzzyCMeans private(
    * The original paper can be found at http://theory.stanford.edu/~sergei/papers/vldb12-kmpar.pdf.
    */
   private def initKMeansParallel(data: RDD[VectorWithNorm])
-  : Array[Array[VectorWithNorm]] = {
+  : Array[VectorWithNorm] = {
     // Initialize empty centers and point costs.
-    val centers = Array.tabulate(runs)(r => ArrayBuffer.empty[VectorWithNorm])
-    var costs = data.map(_ => Array.fill(runs)(Double.PositiveInfinity))
+    val centers = Array.tabulate(1)(r => ArrayBuffer.empty[VectorWithNorm])
+    var costs = data.map(_ => Array.fill(1)(Double.PositiveInfinity))
 
     // Initialize each run's first center to a random point.
     val seed = new XORShiftRandom(this.seed).nextInt()
-    val sample = data.takeSample(withReplacement = true, runs, seed).toSeq
-    val newCenters = Array.tabulate(runs)(r => ArrayBuffer(sample(r).toDense))
+    val sample = data.takeSample(withReplacement = true, 1, seed).toSeq
+    val newCenters = Array.tabulate(1)(r => ArrayBuffer(sample(r).toDense))
 
     /** Merges new centers to centers. */
     def mergeNewCenters(): Unit = {
       var r = 0
-      while (r < runs) {
+      while (r < 1) {
         centers(r) ++= newCenters(r)
         newCenters(r).clear()
         r += 1
@@ -561,16 +481,16 @@ class StreamingFuzzyCMeans private(
       val bcNewCenters = data.context.broadcast(newCenters)
       val preCosts = costs
       costs = data.zip(preCosts).map { case (point, cost) =>
-        Array.tabulate(runs) { r =>
+        Array.tabulate(1) { r =>
           math.min(StreamingFuzzyCMeans.pointCost(bcNewCenters.value(r), point), cost(r))
         }
       }.persist(StorageLevel.MEMORY_AND_DISK)
       val sumCosts = costs
-        .aggregate(new Array[Double](runs))(
+        .aggregate(new Array[Double](1))(
           seqOp = (s, v) => {
             // s += v
             var r = 0
-            while (r < runs) {
+            while (r < 1) {
               s(r) += v(r)
               r += 1
             }
@@ -579,7 +499,7 @@ class StreamingFuzzyCMeans private(
           combOp = (s0, s1) => {
             // s0 += s1
             var r = 0
-            while (r < runs) {
+            while (r < 1) {
               s0(r) += s1(r)
               r += 1
             }
@@ -593,7 +513,7 @@ class StreamingFuzzyCMeans private(
       val chosen = data.zip(costs).mapPartitionsWithIndex { (index, pointsWithCosts) =>
         val rand = new XORShiftRandom(seed ^ (step << 16) ^ index)
         pointsWithCosts.flatMap { case (p, c) =>
-          val rs = (0 until runs).filter { r =>
+          val rs = (0 until 1).filter { r =>
             rand.nextDouble() < 2.0 * c(r) * k / sumCosts(r)
           }
           if (rs.nonEmpty) Some(p, rs) else None
@@ -614,20 +534,20 @@ class StreamingFuzzyCMeans private(
     // on the weighted centers to pick just k of them
     val bcCenters = data.context.broadcast(centers)
     val weightMap = data.flatMap { p =>
-      Iterator.tabulate(runs) { r =>
+      Iterator.tabulate(1) { r =>
         ((r, StreamingFuzzyCMeans.findClosest(bcCenters.value(r), p)._1), 1.0)
       }
     }.reduceByKey(_ + _).collectAsMap()
 
     bcCenters.unpersist(blocking = false)
 
-    val finalCenters = (0 until runs).par.map { r =>
+    val finalCenters = (0 until 1).par.map { r =>
       val myCenters = centers(r).toArray
       val myWeights = myCenters.indices.map(i => weightMap.getOrElse((r, i), 0.0)).toArray
       LocalKMeans.kMeansPlusPlus(r, myCenters, myWeights, k, 30)
     }
 
-    finalCenters.toArray
+    finalCenters.toArray.last
   }
 }
 
@@ -649,18 +569,15 @@ object StreamingFuzzyCMeans {
    * @param data          training points stored as `RDD[Vector]`
    * @param k             number of clusters
    * @param maxIterations max number of iterations
-   * @param runs          number of parallel runs, defaults to 1. The best model is returned.
    * @param initialModel  initial WFCM model for weight initialization
    */
   def train(
              data: RDD[Vector],
              k: Int,
              maxIterations: Int,
-             runs: Int,
              initialModel: ArrayBuffer[StreamingFuzzyCMeansModel]): StreamingFuzzyCMeansModel = {
     new StreamingFuzzyCMeans().setK(k)
       .setMaxIterations(maxIterations)
-      .setRuns(runs)
       .setInitialModel(initialModel)
       .run(data)
   }
@@ -672,7 +589,6 @@ object StreamingFuzzyCMeans {
    * @param data               training points stored as `RDD[Vector]`
    * @param k                  number of clusters
    * @param maxIterations      max number of iterations
-   * @param runs               number of parallel runs, defaults to 1. The best model is returned.
    * @param initializationMode initialization model, either "random" or "k-means||" (default).
    * @param seed               random seed value for cluster initialization
    * @param m                  fuzzyfier, between 1 and infinity, default is 2, 1 leads to hard clustering
@@ -681,13 +597,11 @@ object StreamingFuzzyCMeans {
              data: RDD[Vector],
              k: Int,
              maxIterations: Int,
-             runs: Int,
              initializationMode: String,
              seed: Long,
              m: Double): StreamingFuzzyCMeansModel = {
     new StreamingFuzzyCMeans().setK(k)
       .setMaxIterations(maxIterations)
-      .setRuns(runs)
       .setInitializationMode(initializationMode)
       .setSeed(seed)
       .setM(m)
@@ -700,7 +614,6 @@ object StreamingFuzzyCMeans {
    * @param data               training points stored as `RDD[Vector]`
    * @param k                  number of clusters
    * @param maxIterations      max number of iterations
-   * @param runs               number of parallel runs, defaults to 1. The best model is returned.
    * @param initializationMode initialization model, either "random" or "k-means||" (default).
    * @param seed               random seed value for cluster initialization
    */
@@ -708,12 +621,10 @@ object StreamingFuzzyCMeans {
              data: RDD[Vector],
              k: Int,
              maxIterations: Int,
-             runs: Int,
              initializationMode: String,
              seed: Long): StreamingFuzzyCMeansModel = {
     new StreamingFuzzyCMeans().setK(k)
       .setMaxIterations(maxIterations)
-      .setRuns(runs)
       .setInitializationMode(initializationMode)
       .setSeed(seed)
       .run(data)
@@ -725,30 +636,17 @@ object StreamingFuzzyCMeans {
    * @param data               training points stored as `RDD[Vector]`
    * @param k                  number of clusters
    * @param maxIterations      max number of iterations
-   * @param runs               number of parallel runs, defaults to 1. The best model is returned.
    * @param initializationMode initialization model, either "random" or "k-means||" (default).
    */
   def train(
              data: RDD[Vector],
              k: Int,
              maxIterations: Int,
-             runs: Int,
              initializationMode: String): StreamingFuzzyCMeansModel = {
     new StreamingFuzzyCMeans().setK(k)
       .setMaxIterations(maxIterations)
-      .setRuns(runs)
       .setInitializationMode(initializationMode)
       .run(data)
-  }
-
-  /**
-   * Trains a fuzzy c-means model using specified parameters and the default values for unspecified.
-   */
-  def train(
-             data: RDD[Vector],
-             k: Int,
-             maxIterations: Int): StreamingFuzzyCMeansModel = {
-    train(data, k, maxIterations, 1, K_MEANS_PARALLEL)
   }
 
   /**
@@ -778,9 +676,8 @@ object StreamingFuzzyCMeans {
   def train(
              data: RDD[Vector],
              k: Int,
-             maxIterations: Int,
-             runs: Int): StreamingFuzzyCMeansModel = {
-    train(data, k, maxIterations, runs, K_MEANS_PARALLEL)
+             maxIterations: Int): StreamingFuzzyCMeansModel = {
+    train(data, k, maxIterations, K_MEANS_PARALLEL)
   }
 
   /**

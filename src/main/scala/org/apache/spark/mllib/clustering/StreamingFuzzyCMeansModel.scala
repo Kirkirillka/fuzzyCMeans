@@ -26,7 +26,7 @@ import scala.collection.JavaConverters._
 import scala.collection.mutable.ArrayBuffer
 
 /**
- * A clustering model for Fuzzy C-means. Each point to each cluster with a certain degree of probability
+ * A clustering model for Streaming Fuzzy C-means. Each point to each cluster with a certain degree of probability
  */
 class StreamingFuzzyCMeansModel(val clusterCenters: Array[Vector],
                                 val weights: Vector,
@@ -77,6 +77,9 @@ class StreamingFuzzyCMeansModel(val clusterCenters: Array[Vector],
     val bcm = points.context.broadcast(m)
     points.map { p =>
       val localCentersWithNorm = bcCentersWithNorm.value.toArray
+        // Sort clusters by distance from the beginning of coordinates
+        // Helps to persist order for iterating runs
+        .sortBy(_.norm)
       val localM = bcm.value
       StreamingFuzzyCMeans.degreesOfMembership(
         localCentersWithNorm,

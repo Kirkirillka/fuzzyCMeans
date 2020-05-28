@@ -1,6 +1,6 @@
 package org.apache.spark
 
-import org.apache.spark.mllib.clustering.{StreamingFuzzyCMeans, WeightedFuzzyCMeans}
+import org.apache.spark.mllib.clustering.{StreamingFuzzyCMeans, StreamingFuzzyCMeansModel, WeightedFuzzyCMeans}
 import org.apache.spark.mllib.linalg.Vectors
 
 import scala.collection.mutable.ArrayBuffer
@@ -11,7 +11,7 @@ object SFCMSimpleRunner {
 
     val conf = new SparkConf()
       .setMaster("local[2]")
-      .setAppName("MLlibUnitTest")
+      .setAppName("SFCM_MLlibUnitTest")
     val sc = new SparkContext(conf)
 
 
@@ -24,11 +24,16 @@ object SFCMSimpleRunner {
       Vectors.dense(9.2, 0.0)
     )
     val rdd = sc.parallelize(points, 3).cache()
+    rdd.cache()
 
-    var model = StreamingFuzzyCMeans.train(rdd, k = 2, maxIterations = 1, runs = 1)
+    var model = StreamingFuzzyCMeans.train(rdd, k = 3 , maxIterations = 10)
 
-    for {i <- 1 to 30} {
-      val iterative = StreamingFuzzyCMeans.train(rdd, k = 2, maxIterations = 1, runs = 1, ArrayBuffer(model))
+    val histModels = ArrayBuffer(model)
+
+    for {_ <- 1 to 30} {
+      val iterative = StreamingFuzzyCMeans.train(rdd, k = 3, maxIterations = 200,histModels.takeRight(1))
+
+      histModels.append(iterative)
 
       model = iterative
 
