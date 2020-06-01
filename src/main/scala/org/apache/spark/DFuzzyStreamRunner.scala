@@ -19,19 +19,29 @@ object DFuzzyStreamRunner {
       Vectors.dense(0.1, 0.0),
       Vectors.dense(9.0, 0.0),
       Vectors.dense(9.0, 0.2),
-      Vectors.dense(9.2, 0.0)
+      Vectors.dense(9.2, 0.0),
+      Vectors.dense(5.0, 9.0),
+      Vectors.dense(5.0, 0.1),
+      Vectors.dense(5.1, 3.0),
+      Vectors.dense(9.0, 0.0),
+      Vectors.dense(9.0, 5.2),
+      Vectors.dense(9.2, 0.0),
+      Vectors.dense(1,2),
+        Vectors.dense(1,3)
     )
     val rdd = sc.parallelize(points, 3).cache()
 
-    val pre_model = DFuzzyStream.train(rdd, 2.0)
+    val rdd2 = sc.parallelize(points, 3).cache()
 
-    val model = DFuzzyStream.train(rdd,2.0, pre_model.getFMiC)
+    val model = DFuzzyStream.train(rdd, 2.0)
 
-    val fuzzyPredicts = model.fuzzyPredict(rdd).collect()
+    val fuzzyPredicts = model.fuzzyPredict(rdd2).collect()
+
+    assert(points.length == fuzzyPredicts.length)
 
     rdd.collect() zip fuzzyPredicts foreach { fuzzyPredict =>
       println(s" Point ${fuzzyPredict._1}")
-      fuzzyPredict._2 foreach{clusterAndProbability =>
+      fuzzyPredict._2 foreach { clusterAndProbability =>
         println(s"Probability to belong to cluster ${clusterAndProbability._1} " +
           s"is ${"%.2f".format(clusterAndProbability._2)}")
       }
