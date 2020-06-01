@@ -170,7 +170,33 @@ class DFuzzyStream private(
           }
         })
 
+        //merge
+        acc.map(ArrayBuffer(_)).fold(ArrayBuffer.empty[FuzzyCluster])((acc, clusters) => {
+
+          clusters.foreach(cluster => {
+            var isMerged=false
+
+            acc.foreach(accCluster => {
+              val similarity = cluster.similarity(accCluster)
+
+              if (similarity > threshold && ! isMerged){
+                isMerged = true
+
+                accCluster.merge(cluster)
+              }
+            })
+
+            if( !isMerged) {
+              acc.append(cluster)
+            }
+          })
+
+          acc
+
+        })
+
         acc
+
       })
 
     println(finalFMICs)
@@ -322,14 +348,34 @@ case class FuzzyCluster(
   }
 
   private def updateCF(point: VectorWithNorm, membership: Double) = {
-    axpy(membership, point.vector, cf.vector)
-    new VectorWithNorm(cf.vector)
+
+    val newVec = cf.vector.copy
+
+    axpy(membership, point.vector, newVec)
+    new VectorWithNorm(newVec)
   }
 
   private def updateSSD(distance: Double, membership: Double) = {
     ssd + (membership * Math.sqrt(distance))
   }
 
+  def similarity(other:FuzzyCluster) = {
+    val sum_radius = dp  + other.dp
+    val dist = DFuzzyStream.fastSquaredDistance(cf, other.cf)
+    // similarity
+    sum_radius/dist
+  }
+
+  def merge(other: FuzzyCluster) = {
+    N += other.N
+    M += other.M
+    ssd += other.ssd
+
+    val newVec = cf.vector.copy
+
+    axpy(1.0, other.cf.vector, newVec)
+    cf = new VectorWithNorm(newVec)
+  }
 
   def update(point: VectorWithNorm, distance: Double, membership: Double) = {
     ssd = updateSSD(distance, membership)
