@@ -80,6 +80,9 @@ class WeightedFuzzyCMeansModel(val clusterCenters: Array[Vector],
     val bcm = points.context.broadcast(m)
     points.map { p =>
       val localCentersWithNorm = bcCentersWithNorm.value.toArray
+        // Sort clusters by distance from the beginning of coordinates
+        // Helps to persist order for iterating runs
+        .sortBy(_.norm)
       val localM = bcm.value
       WeightedFuzzyCMeans.degreesOfMembership(
         localCentersWithNorm,
