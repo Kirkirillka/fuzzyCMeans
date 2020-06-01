@@ -24,7 +24,11 @@ class DFuzzyStream private(
 
   require(max_fmics >= min_fmics)
 
-  def this() = this(2, 5, 1e-4, 2.0)
+  // According to the article
+  // threshold = 1 means any size overlapping clusters,  The greater the value
+  //of τ , the more overlapped the FMiCs must be for a merge to
+  //occur. Therefore, we expect to merge clusters if they overlap a little more
+  def this() = this(2, 5, 1.1, 2.0)
 
 
   def setM(M: Double): this.type = {
@@ -43,6 +47,7 @@ class DFuzzyStream private(
   }
 
   def setThreshold(value: Double): this.type = {
+    require(value >= 0 )
     threshold = value
     this
   }
@@ -168,32 +173,35 @@ class DFuzzyStream private(
               })
             }
           }
-        })
 
-        //merge
-        acc.map(ArrayBuffer(_)).fold(ArrayBuffer.empty[FuzzyCluster])((acc, clusters) => {
 
-          clusters.foreach(cluster => {
-            var isMerged=false
+          //merge
+          acc.map(ArrayBuffer(_)).fold(ArrayBuffer.empty[FuzzyCluster])((acc, clusters) => {
 
-            acc.foreach(accCluster => {
-              val similarity = cluster.similarity(accCluster)
+            clusters.foreach(cluster => {
+              var isMerged=false
 
-              if (similarity > threshold && ! isMerged){
-                isMerged = true
+              acc.foreach(accCluster => {
+                val similarity = cluster.similarity(accCluster)
 
-                accCluster.merge(cluster)
+                if (similarity > threshold && ! isMerged){
+                  isMerged = true
+
+                  accCluster.merge(cluster)
+                }
+              })
+
+              if( !isMerged) {
+                acc.append(cluster)
               }
             })
 
-            if( !isMerged) {
-              acc.append(cluster)
-            }
+            acc
+
           })
 
-          acc
-
         })
+
 
         acc
 
