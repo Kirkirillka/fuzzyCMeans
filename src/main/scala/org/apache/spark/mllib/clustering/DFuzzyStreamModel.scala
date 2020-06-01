@@ -94,4 +94,7 @@ class DFuzzyStreamModel(val fmic: Array[FuzzyCluster],
   private def clusterCentersWithNorm: Iterable[VectorWithNorm] =
     fmic.map(_.c)
 
+
+  def getFMiC = fmic
+
 }

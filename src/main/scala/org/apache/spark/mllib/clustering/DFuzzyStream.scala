@@ -15,20 +15,45 @@ import scala.collection.mutable.ArrayBuffer
 
 
 class DFuzzyStream private(
-                            var min_fmics: Int,
-                            var max_fmics: Int,
-                            var threshold: Double,
-                            var m: Double
+                            private var min_fmics: Int,
+                            private var max_fmics: Int,
+                            private var threshold: Double,
+                            private var m: Double
                           ) extends Serializable with Logging {
 
 
   require(max_fmics >= min_fmics)
 
-  def this() = this(1, 5, 1e-4, 2.0)
+  def this() = this(2, 5, 1e-4, 2.0)
 
 
-  def setM(M: Double) = {
+  def setM(M: Double): this.type = {
     m = M
+    this
+  }
+
+  def setMinFMiC(n: Int): this.type = {
+    min_fmics = n; this
+  }
+
+  def setMaxFMiC(n: Int): this.type = {
+    require(n >= min_fmics)
+    max_fmics = n
+    this
+  }
+
+  def setThreshold(value: Double): this.type = {
+    threshold = value
+    this
+  }
+
+  private var initialModel: Option[ArrayBuffer[FuzzyCluster]] = None
+
+  /**
+   * Set the initial starting point, bypassing the initial emtpy ArrayBuffer for fold operation
+   */
+  def setInitialModel(model: ArrayBuffer[FuzzyCluster]): this.type = {
+    initialModel = Some(model)
     this
   }
 
@@ -72,90 +97,86 @@ class DFuzzyStream private(
 
     val initStartTime = System.nanoTime()
 
-    var fmic = ArrayBuffer.empty[FuzzyCluster]
-
-    val bcFMIC = sc.broadcast(fmic)
+    val initCluster = initialModel match {
+      case Some(model) => model
+      case None => ArrayBuffer.empty[FuzzyCluster]
+    }
 
     val initTimeInSeconds = (System.nanoTime() - initStartTime) / 1e9
     logInfo(s"Initialization took" + "%.3f".format(initTimeInSeconds) +
       " seconds.")
 
+    // HAD to use .collect() to execute on driver
+    // because it actively uses a array updates
 
-    data.foreach(point => {
+    val finalFMICs = data.map(new FuzzyCluster(_))
+      .map(ArrayBuffer(_))
+      .fold(initCluster)((acc, clusters) => {
 
-      var thisFmic = bcFMIC.value
+        clusters.foreach(cluster => {
 
-
-      println("FMIC size is:", thisFmic.length)
-
-      // Check if we have enough number of clusters
-      // If less than minimum, then add a new point as cluster
-      if (thisFmic.length < min_fmics) {
-        val newFmiC = new FuzzyCluster(point)
-        thisFmic.append(newFmiC)
-      }
-      else {
-
-        //val distances = FmiC.map(pair => DFuzzyStream.fastSquaredDistance(pair._1.c, point))
-
-        println(thisFmic.mkString(","))
-        val (mbrpDegree, distances) = DFuzzyStream.degreesOfMembership(thisFmic.map(_.c).toArray, point, m)
-
-        var isOutlier = true
-
-        thisFmic.zipWithIndex.foreach(pair => {
-
-          val (eachCluster, eachIdx) = pair
-
-          val radius = thisFmic match {
-                // ArrayBuffer contains more than one cluster
-            case thisFmic if thisFmic.length>1 && eachCluster.getN == 1 => thisFmic.filter(_ != eachCluster)
-              .map(cluster => DFuzzyStream.fastSquaredDistance(cluster.c, point)).min
-            case _ => eachCluster.dp
+          if (acc.length < min_fmics) {
+            acc.append(cluster)
           }
+          else {
 
-          if (distances(eachIdx) <= radius) {
-            isOutlier = false
-            // Update access time
-            eachCluster.setTime(Calendar.getInstance.getTime)
+            val (mbrpDegree, distances) = DFuzzyStream.degreesOfMembership(acc.toArray.map(_.c), cluster.c, m)
+
+            var isOutlier = true
+
+            acc.zipWithIndex.foreach(pair => {
+
+              val (eachCluster, eachIdx) = pair
+
+              val radius = acc match {
+                // ArrayBuffer contains more than one cluster
+                case acc if acc.length > 1 && eachCluster.getN == 1 => acc.filter(_ != eachCluster)
+                  .map(otherCluster => DFuzzyStream.fastSquaredDistance(otherCluster.c, cluster.c)).min
+                case _ => eachCluster.dp
+              }
+
+              if (distances(eachIdx) <= radius) {
+                isOutlier = false
+                // Update access time
+                eachCluster.setTime(Calendar.getInstance.getTime)
+              }
+            })
+
+            //If an outlier is detected
+            if (isOutlier) {
+              // If we reached the limit of clusters
+              if (acc.length >= max_fmics) {
+                // Delete old fuzzy clusters
+                // return only newest acc
+                acc --= remoteOldest(acc)
+              }
+              // It defines a new fuzzy cluster
+              acc.append(cluster)
+            }
+            // If inside one of the existing fuzzy clusters
+            else {
+
+              // update existing targets
+              acc.zipWithIndex.map(pair => {
+
+                val (otherCluster, idx) = pair
+
+                val tgDistance = distances(idx)
+                val tgMembership = mbrpDegree(idx)
+
+                otherCluster.update(cluster.c, tgDistance, tgMembership)
+              })
+            }
           }
         })
 
-        // If an outlier is detected
-        if (isOutlier) {
-          // If we reached the limit of clusters
-          if (thisFmic.length >= max_fmics) {
-            // Delete old fuzzy clusters
-            thisFmic = remoteOldest(thisFmic)
-          }
-          // It defines a new fuzzy cluster
-          val newCluster = new FuzzyCluster(point)
-          thisFmic.append(newCluster)
-        }
-        // If inside one of the existing fuzzy clusters
-        else {
+        acc
+      })
 
-          // update existing tagets
-          thisFmic = thisFmic.zipWithIndex.map(pair => {
-
-            val (cluster, idx) = pair
-
-            val tgDistance = distances(idx)
-            val tgMembership = mbrpDegree(idx)
-
-            cluster.update(point, tgDistance, tgMembership)
-          })
-
-        }
-
-      }
-      fmic = thisFmic
-    })
-
-    println("Final FMIC size is:", fmic.length)
+    println(finalFMICs)
 
     new DFuzzyStreamModel(
-      fmic.toArray
+      finalFMICs.toArray
     )
   }
 
@@ -174,6 +195,22 @@ object DFuzzyStream {
              m: Double): DFuzzyStreamModel = {
     new clustering.DFuzzyStream()
       .setM(m)
+      .run(data)
+  }
+
+  /**
+   * Trains a d-FuzzyStream model using the given set of parameters.
+   *
+   * @param data training points stored as `RDD[Vector]`
+   * @param m    fuzzyfier, between 1 and infinity, default is 2, 1 leads to hard clustering
+   */
+  def train(
+             data: RDD[Vector],
+             m: Double,
+             initialModel: Array[FuzzyCluster]): DFuzzyStreamModel = {
+    new clustering.DFuzzyStream()
+      .setM(m)
+      .setInitialModel(initialModel.to[ArrayBuffer])
       .run(data)
   }
 
@@ -263,13 +300,13 @@ object DFuzzyStream {
 }
 
 
-class FuzzyCluster(
-                    private var cf: VectorWithNorm,
-                    private var ssd: Double,
-                    private var N: Long,
-                    private var t: Date,
-                    private var M: Double
-                  ) {
+case class FuzzyCluster(
+                         private var cf: VectorWithNorm,
+                         private var ssd: Double,
+                         private var N: Long,
+                         private var t: Date,
+                         private var M: Double
+                       ) extends Serializable {
 
   def this(point: VectorWithNorm) = this(point, 0, 1, Calendar.getInstance.getTime, 1.0)
 
@@ -312,30 +349,3 @@ class FuzzyCluster(
 
   def FR(that: FuzzyCluster) = (this.dp + that.dp) / (DFuzzyStream.fastSquaredDistance(this.c, that.c))
 }
-
-
-
-//
-//
-//private[clustering]
-//class FuzzyClusterAccumulator(private var fcim: FuzzyCluster)
-//  extends AccumulatorV2[FuzzyCluster, FuzzyCluster] {
-//
-//  override def isZero: Boolean = fcim.getN ==0
-//
-//  override def copy(): AccumulatorV2[FuzzyCluster, FuzzyCluster] = {
-//
-//    val newFCIMAcc = new FuzzyClusterAccumulator(fcim)
-//
-//    newFCIMAcc
-//  }
-//
-//  override def reset(): Unit = fcim = new FuzzyCluster()
-//
-//
-//  override def merge(other: AccumulatorV2[FuzzyCluster, List[FuzzyCluster]]): Unit = fcim.union(other.value)
-//
-//  override def value: List[FuzzyCluster] = fcim = new FuzzyCluster()
-//
-//  override def add(v: FuzzyCluster): Unit = fcim = fcim :+ v
-//}

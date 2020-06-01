@@ -23,7 +23,9 @@ object DFuzzyStreamRunner {
     )
     val rdd = sc.parallelize(points, 3).cache()
 
-    val model = DFuzzyStream.train(rdd, 2.0)
+    val pre_model = DFuzzyStream.train(rdd, 2.0)
+
+    val model = DFuzzyStream.train(rdd,2.0, pre_model.getFMiC)
 
     val fuzzyPredicts = model.fuzzyPredict(rdd).collect()
 
