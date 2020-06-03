@@ -52,17 +52,17 @@ class DFuzzyStream private(
     this
   }
 
-  private var initialModel: Option[ArrayBuffer[UncertainCluster]] = None
+  private var initialModel: Option[ArrayBuffer[FuzzyCluster]] = None
 
   /**
    * Set the initial starting point, bypassing the initial emtpy ArrayBuffer for fold operation
    */
-  def setInitialModel(model: ArrayBuffer[UncertainCluster]): this.type = {
+  def setInitialModel(model: ArrayBuffer[FuzzyCluster]): this.type = {
     initialModel = Some(model)
     this
   }
 
-  private def remoteOldest(clusters: ArrayBuffer[UncertainCluster]): ArrayBuffer[UncertainCluster] = {
+  private def remoteOldest(clusters: ArrayBuffer[FuzzyCluster]): ArrayBuffer[FuzzyCluster] = {
     clusters.synchronized {
 
       val oldestTimeAccess = clusters.map(_.getTime).min
@@ -104,7 +104,7 @@ class DFuzzyStream private(
 
     val initCluster = initialModel match {
       case Some(model) => model
-      case None => ArrayBuffer.empty[UncertainCluster]
+      case None => ArrayBuffer.empty[FuzzyCluster]
     }
 
     val initTimeInSeconds = (System.nanoTime() - initStartTime) / 1e9
@@ -114,7 +114,7 @@ class DFuzzyStream private(
     // HAD to use .collect() to execute on driver
     // because it actively uses a array updates
 
-    val finalFMICs = data.map(new UncertainCluster(_))
+    val finalFMICs = data.map(new FuzzyCluster(_))
       .map(ArrayBuffer(_))
       .fold(initCluster)((acc, clusters) => {
 
@@ -176,7 +176,7 @@ class DFuzzyStream private(
 
 
           //merge
-          acc.map(ArrayBuffer(_)).fold(ArrayBuffer.empty[UncertainCluster])((acc, clusters) => {
+          acc.map(ArrayBuffer(_)).fold(ArrayBuffer.empty[FuzzyCluster])((acc, clusters) => {
 
             clusters.foreach(cluster => {
               var isMerged=false
@@ -207,8 +207,6 @@ class DFuzzyStream private(
 
       })
 
-    println(finalFMICs)
-
     new DFuzzyStreamModel(
       finalFMICs.toArray
     )
@@ -237,11 +235,48 @@ object DFuzzyStream {
    *
    * @param data training points stored as `RDD[Vector]`
    * @param m    fuzzyfier, between 1 and infinity, default is 2, 1 leads to hard clustering
+   * @param minFmic    minimum number of fuzzy clusters to produce
    */
   def train(
              data: RDD[Vector],
              m: Double,
-             initialModel: Array[UncertainCluster]): DFuzzyStreamModel = {
+             minFmic: Int): DFuzzyStreamModel = {
+    new clustering.DFuzzyStream()
+      .setM(m)
+      .setMinFMiC(minFmic)
+      .run(data)
+  }
+
+  /**
+   * Trains a d-FuzzyStream model using the given set of parameters.
+   *
+   * @param data training points stored as `RDD[Vector]`
+   * @param m    fuzzyfier, between 1 and infinity, default is 2, 1 leads to hard clustering
+   * @param minFmic    minimum number of fuzzy clusters to produce
+   * @param maxFmic    maximum number of fuzzy clusters to produce
+   */
+  def train(
+             data: RDD[Vector],
+             m: Double,
+             minFmic: Int,
+             maxFmic: Int): DFuzzyStreamModel = {
+    new clustering.DFuzzyStream()
+      .setM(m)
+      .setMinFMiC(minFmic)
+      .setMaxFMiC(maxFmic)
+      .run(data)
+  }
+
+  /**
+   * Trains a d-FuzzyStream model using the given set of parameters.
+   *
+   * @param data training points stored as `RDD[Vector]`
+   * @param m    fuzzyfier, between 1 and infinity, default is 2, 1 leads to hard clustering
+   */
+  def train(
+             data: RDD[Vector],
+             m: Double,
+             initialModel: Array[FuzzyCluster]): DFuzzyStreamModel = {
     new clustering.DFuzzyStream()
       .setM(m)
       .setInitialModel(initialModel.to[ArrayBuffer])
@@ -367,14 +402,14 @@ case class FuzzyCluster(
     ssd + (membership * Math.sqrt(distance))
   }
 
-  def similarity(other:UncertainCluster) = {
+  def similarity(other:FuzzyCluster) = {
     val sum_radius = dp  + other.dp
     val dist = DFuzzyStream.fastSquaredDistance(cf, other.cf)
     // similarity
     sum_radius/dist
   }
 
-  def merge(other: UncertainCluster) = {
+  def merge(other: FuzzyCluster) = {
     N += other.N
     M += other.M
     ssd += other.ssd
@@ -401,5 +436,5 @@ case class FuzzyCluster(
 
   def dp = Math.sqrt(ssd / N)
 
-  def FR(that: UncertainCluster) = (this.dp + that.dp) / (DFuzzyStream.fastSquaredDistance(this.c, that.c))
+  def FR(that: FuzzyCluster) = (this.dp + that.dp) / (DFuzzyStream.fastSquaredDistance(this.c, that.c))
 }

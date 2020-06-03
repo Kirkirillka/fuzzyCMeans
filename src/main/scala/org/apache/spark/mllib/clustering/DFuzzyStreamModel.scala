@@ -23,9 +23,9 @@ import org.apache.spark.mllib.pmml.PMMLExportable
 import org.apache.spark.rdd.RDD
 
 /**
- * A clustering model for d-FuzzyStream algorithm. Each point to each cluster with a certain degree of probability
+ * A clustering model for Fuzzy C-means. Each point to each cluster with a certain degree of probability
  */
-class DFuzzyStreamModel(val fmic: Array[UncertainCluster],
+class DFuzzyStreamModel(val fmic: Array[FuzzyCluster],
                         val m: Double = 2.0
                         )
   extends Serializable with PMMLExportable {
