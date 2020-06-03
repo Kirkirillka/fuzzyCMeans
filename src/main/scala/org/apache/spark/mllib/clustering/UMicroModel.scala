@@ -23,10 +23,10 @@ import org.apache.spark.mllib.pmml.PMMLExportable
 import org.apache.spark.rdd.RDD
 
 /**
- * A clustering model for d-FuzzyStream algorithm. Each point to each cluster with a certain degree of probability
+ * A clustering model for Fuzzy C-means. Each point to each cluster with a certain degree of probability
  */
-class DFuzzyStreamModel(val fmic: Array[UncertainCluster],
-                        val m: Double = 2.0
+class UMicroModel(val fmic: Array[UncertainCluster],
+                  val m: Double = 2.0
                         )
   extends Serializable with PMMLExportable {
 
@@ -34,7 +34,7 @@ class DFuzzyStreamModel(val fmic: Array[UncertainCluster],
    * Returns the cluster index that a given point belongs to.
    */
   def predict(point: Vector): Int = {
-    DFuzzyStream.findClosest(clusterCentersWithNorm, new VectorWithNorm(point))._1
+    UMicro.findClosest(clusterCentersWithNorm, new VectorWithNorm(point))._1
   }
 
   /**
@@ -43,7 +43,7 @@ class DFuzzyStreamModel(val fmic: Array[UncertainCluster],
    */
   def fuzzyPredict(point: Vector): Seq[(Int, Double)] = {
     val centersWithNorm = clusterCentersWithNorm.toArray
-    val degreesOfMembership = DFuzzyStream.degreesOfMembership(
+    val degreesOfMembership = UMicro.degreesOfMembership(
       centersWithNorm,
       new VectorWithNorm(point), 2.0)._1
     degreesOfMembership.zipWithIndex.map(_.swap)
@@ -55,7 +55,7 @@ class DFuzzyStreamModel(val fmic: Array[UncertainCluster],
   def predict(points: RDD[Vector]): RDD[Int] = {
     val centersWithNorm = clusterCentersWithNorm
     val bcCentersWithNorm = points.context.broadcast(centersWithNorm)
-    points.map(p => DFuzzyStream.findClosest(bcCentersWithNorm.value, new VectorWithNorm(p))._1)
+    points.map(p => UMicro.findClosest(bcCentersWithNorm.value, new VectorWithNorm(p))._1)
   }
 
   /**

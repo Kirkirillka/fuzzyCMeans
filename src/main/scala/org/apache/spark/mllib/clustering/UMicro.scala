@@ -3,8 +3,8 @@ package org.apache.spark.mllib.clustering
 import java.util.{Calendar, Date}
 
 import org.apache.spark.internal.Logging
-import org.apache.spark.mllib.clustering
-import org.apache.spark.mllib.linalg.BLAS.{axpy, scal}
+import org.apache.spark.mllib.{clustering, linalg}
+import org.apache.spark.mllib.linalg.BLAS.{axpy, dot, scal}
 import org.apache.spark.mllib.linalg.{Vector, Vectors}
 import org.apache.spark.mllib.util.MLUtils
 import org.apache.spark.rdd.RDD
@@ -14,40 +14,18 @@ import org.apache.spark.util.AccumulatorV2
 import scala.collection.mutable.ArrayBuffer
 
 
-class DFuzzyStream private(
-                            private var min_fmics: Int,
-                            private var max_fmics: Int,
-                            private var threshold: Double,
-                            private var m: Double
-                          ) extends Serializable with Logging {
+class UMicro private(
+                      private var nMicro: Int,
+                      private var threshold: Double
+                    ) extends Serializable with Logging {
 
 
-  require(max_fmics >= min_fmics)
+  // standard deviation = 3
+  def this() = this(2, 3.0)
 
-  // According to the article
-  // threshold = 1 means any size overlapping clusters,  The greater the value
-  //of τ , the more overlapped the FMiCs must be for a merge to
-  //occur. Therefore, we expect to merge clusters if they overlap a little more
-  def this() = this(2, 5, 1.1, 2.0)
-
-
-  def setM(M: Double): this.type = {
-    m = M
-    this
-  }
-
-  def setMinFMiC(n: Int): this.type = {
-    min_fmics = n; this
-  }
-
-  def setMaxFMiC(n: Int): this.type = {
-    require(n >= min_fmics)
-    max_fmics = n
-    this
-  }
 
   def setThreshold(value: Double): this.type = {
-    require(value >= 0 )
+    require(value >= 0)
     threshold = value
     this
   }
@@ -71,21 +49,14 @@ class DFuzzyStream private(
     }
   }
 
-  def run(data: RDD[Vector]): DFuzzyStreamModel = {
+  def run(data: RDD[Vector]): UMicroModel = {
 
     if (data.getStorageLevel == StorageLevel.NONE) {
       logWarning("The input data is not directly cached, which may hurt performance if its"
         + " parent RDDs are also uncached.")
     }
 
-    // Compute squared norms and cache them.
-    val norms = data.map(Vectors.norm(_, 2.0))
-    norms.persist()
-    val zippedData = data.zip(norms).map { case (v, norm) =>
-      new VectorWithNorm(v, norm)
-    }
-    val model = runAlgorithm(zippedData)
-    norms.unpersist()
+    val model = runAlgorithm(data)
 
     // Warn at the end of the run as well, for increased visibility.
     if (data.getStorageLevel == StorageLevel.NONE) {
@@ -96,7 +67,7 @@ class DFuzzyStream private(
   }
 
 
-  def runAlgorithm(data: RDD[VectorWithNorm]): DFuzzyStreamModel = {
+  def runAlgorithm(data: RDD[Vector]): UMicroModel = {
 
     val sc = data.sparkContext
 
@@ -120,88 +91,16 @@ class DFuzzyStream private(
 
         clusters.foreach(cluster => {
 
-          if (acc.length < min_fmics) {
+          if (acc.length < nMicro) {
             acc.append(cluster)
           }
           else {
 
-            val (mbrpDegree, distances) = DFuzzyStream.degreesOfMembership(acc.toArray.map(_.c), cluster.c, m)
+            val (minCluster, minDistance) = acc.map(r => (r, r.distance(cluster))).minBy(_._2)
 
-            var isOutlier = true
 
-            acc.zipWithIndex.foreach(pair => {
 
-              val (eachCluster, eachIdx) = pair
-
-              val radius = acc match {
-                // ArrayBuffer contains more than one cluster
-                case acc if acc.length > 1 && eachCluster.getN == 1 => acc.filter(_ != eachCluster)
-                  .map(otherCluster => DFuzzyStream.fastSquaredDistance(otherCluster.c, cluster.c)).min
-                case _ => eachCluster.dp
-              }
-
-              if (distances(eachIdx) <= radius) {
-                isOutlier = false
-                // Update access time
-                eachCluster.setTime(Calendar.getInstance.getTime)
-              }
-            })
-
-            //If an outlier is detected
-            if (isOutlier) {
-              // If we reached the limit of clusters
-              if (acc.length >= max_fmics) {
-                // Delete old fuzzy clusters
-                // return only newest acc
-                acc --= remoteOldest(acc)
-              }
-              // It defines a new fuzzy cluster
-              acc.append(cluster)
-            }
-            // If inside one of the existing fuzzy clusters
-            else {
-
-              // update existing targets
-              acc.zipWithIndex.map(pair => {
-
-                val (otherCluster, idx) = pair
-
-                val tgDistance = distances(idx)
-                val tgMembership = mbrpDegree(idx)
-
-                otherCluster.update(cluster.c, tgDistance, tgMembership)
-              })
-            }
           }
-
-
-          //merge
-          acc.map(ArrayBuffer(_)).fold(ArrayBuffer.empty[UncertainCluster])((acc, clusters) => {
-
-            clusters.foreach(cluster => {
-              var isMerged=false
-
-              acc.foreach(accCluster => {
-                val similarity = cluster.similarity(accCluster)
-
-                if (similarity > threshold && ! isMerged){
-                  isMerged = true
-
-                  accCluster.merge(cluster)
-                }
-              })
-
-              if( !isMerged) {
-                acc.append(cluster)
-              }
-            })
-
-            acc
-
-          })
-
-        })
-
 
         acc
 
@@ -209,14 +108,14 @@ class DFuzzyStream private(
 
     println(finalFMICs)
 
-    new DFuzzyStreamModel(
+    new UMicroModel(
       finalFMICs.toArray
     )
   }
 
 }
 
-object DFuzzyStream {
+object UMicro {
 
   /**
    * Trains a d-FuzzyStream model using the given set of parameters.
@@ -226,9 +125,8 @@ object DFuzzyStream {
    */
   def train(
              data: RDD[Vector],
-             m: Double): DFuzzyStreamModel = {
-    new clustering.DFuzzyStream()
-      .setM(m)
+             m: Double): UMicroModel = {
+    new clustering.UMicro()
       .run(data)
   }
 
@@ -241,9 +139,8 @@ object DFuzzyStream {
   def train(
              data: RDD[Vector],
              m: Double,
-             initialModel: Array[UncertainCluster]): DFuzzyStreamModel = {
-    new clustering.DFuzzyStream()
-      .setM(m)
+             initialModel: Array[UncertainCluster]): UMicroModel = {
+    new clustering.UMicro()
       .setInitialModel(initialModel.to[ArrayBuffer])
       .run(data)
   }
@@ -333,18 +230,23 @@ object DFuzzyStream {
 
 }
 
+/**
+ *
+ * @param ef  sum of squares of errors, actually, is stored as norm-1 vector, access to real ef through EF func
+ * @param cf1 sum of data points over each d-dimensions, norm-1 vector, access to to real values
+ *            through CF1 and CF2  function
+ * @param N   number of data points in uncertain cluster
+ * @param t   time of last updates
+ */
+case class UncertainCluster(private var cf2: Vector,
+                            private var ef1: Vector,
+                            private var cf1: Vector,
+                            private var N: Long,
+                            private var t: Date,
+                           ) extends Serializable {
 
-case class FuzzyCluster(
-                         private var cf: VectorWithNorm,
-                         private var ssd: Double,
-                         private var N: Long,
-                         private var t: Date,
-                         private var M: Double
-                       ) extends Serializable {
-
-  def this(point: VectorWithNorm) = this(point, 0, 1, Calendar.getInstance.getTime, 1.0)
-
-  def this() = this(new VectorWithNorm(Vectors.dense(0)))
+  def this(point: Vector) = this(Vectors.dense(point.toArray.map(Math.pow(_,2.0))),
+    Vectors.dense(Array.fill(point.size)(0.0)), point.copy, 1, Calendar.getInstance.getTime)
 
   def getN = N
 
@@ -355,51 +257,68 @@ case class FuzzyCluster(
     this
   }
 
-  private def updateCF(point: VectorWithNorm, membership: Double) = {
+  private def pow2(vec: Vector) = Vectors.dense(vec.toArray.map(Math.pow(_,2.0)))
 
-    val newVec = cf.vector.copy
+  def ef2 = pow2(ef1)
 
-    axpy(membership, point.vector, newVec)
-    new VectorWithNorm(newVec)
+  def expectedClusterCenter = {
+    val centroid = cf1.copy
+    val copyEr = ef1.copy
+
+    scal(1 / N, centroid)
+    scal(1 / N, copyEr)
+
+    axpy(1.0, copyEr, centroid)
+
+    centroid
   }
 
-  private def updateSSD(distance: Double, membership: Double) = {
-    ssd + (membership * Math.sqrt(distance))
+  def uncertainRadius(dataPoint: Vector) = distance(dataPoint)
+
+  def uncertainRadius(cluster: UncertainCluster) = distance(cluster.expectedClusterCenter)
+
+  def distance(cluster: UncertainCluster) = distance(cluster.expectedClusterCenter)
+
+  def distance(dataPoint: Vector) = {
+
+    val distance = Vectors.dense(Array.fill(dataPoint.size)(0.0))
+
+    val cf1_loc = cf1.copy
+    val ef2_loc = ef2.copy
+    val error_loc = getErrorVector(dataPoint)
+
+
+    // Expected value term
+    axpy(1/Math.pow(N,2.0),pow2(cf1_loc), distance)
+
+    axpy(1/Math.pow(N,2.0),pow2(ef2_loc), distance)
+
+    axpy(1.0,pow2(dataPoint), distance)
+
+    axpy(1.0,pow2(error_loc), distance)
+
+    val interm = {
+      val a = dataPoint.toArray
+      val b = cf1.toArray
+
+      Vectors.dense(a.zip(b).map(pair => pair._1 * pair._2))
+    }
+
+    axpy(-2.0/N,interm, distance)
+
+    // sum
+    Vectors.norm(distance, 1.0)
+
   }
 
-  def similarity(other:UncertainCluster) = {
-    val sum_radius = dp  + other.dp
-    val dist = DFuzzyStream.fastSquaredDistance(cf, other.cf)
-    // similarity
-    sum_radius/dist
+  private def getErrorVector(dataPoint: Vector) = {
+    val errorVector = expectedClusterCenter
+
+    axpy(-1.0, dataPoint, errorVector)
+
+    errorVector
+
   }
 
-  def merge(other: UncertainCluster) = {
-    N += other.N
-    M += other.M
-    ssd += other.ssd
 
-    val newVec = cf.vector.copy
-
-    axpy(1.0, other.cf.vector, newVec)
-    cf = new VectorWithNorm(newVec)
-  }
-
-  def update(point: VectorWithNorm, distance: Double, membership: Double) = {
-    ssd = updateSSD(distance, membership)
-    cf = updateCF(point, membership)
-    N += 1
-    M += membership
-
-    this
-  }
-
-  def c = {
-    scal(1 / M, cf.vector)
-    new VectorWithNorm(cf.vector)
-  }
-
-  def dp = Math.sqrt(ssd / N)
-
-  def FR(that: UncertainCluster) = (this.dp + that.dp) / (DFuzzyStream.fastSquaredDistance(this.c, that.c))
 }
