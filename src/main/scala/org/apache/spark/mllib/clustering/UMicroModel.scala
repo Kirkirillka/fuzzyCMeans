@@ -25,57 +25,23 @@ import org.apache.spark.rdd.RDD
 /**
  * A clustering model for Fuzzy C-means. Each point to each cluster with a certain degree of probability
  */
-class UMicroModel(val fmic: Array[UncertainCluster],
-                  val m: Double = 2.0
-                        )
+class UMicroModel(val uncertainClusters: Array[UncertainCluster])
   extends Serializable with PMMLExportable {
 
   /**
    * Returns the cluster index that a given point belongs to.
    */
   def predict(point: Vector): Int = {
-    UMicro.findClosest(clusterCentersWithNorm, new VectorWithNorm(point))._1
-  }
-
-  /**
-   * For each cluster, returns its index
-   * and the probability for the point to belong to that particular cluster
-   */
-  def fuzzyPredict(point: Vector): Seq[(Int, Double)] = {
-    val centersWithNorm = clusterCentersWithNorm.toArray
-    val degreesOfMembership = UMicro.degreesOfMembership(
-      centersWithNorm,
-      new VectorWithNorm(point), 2.0)._1
-    degreesOfMembership.zipWithIndex.map(_.swap)
+    UMicro.findClosest(clusterCenters, new VectorWithNorm(point))._1
   }
 
   /**
    * Maps given points to their cluster indices.
    */
   def predict(points: RDD[Vector]): RDD[Int] = {
-    val centersWithNorm = clusterCentersWithNorm
-    val bcCentersWithNorm = points.context.broadcast(centersWithNorm)
-    points.map(p => UMicro.findClosest(bcCentersWithNorm.value, new VectorWithNorm(p))._1)
-  }
-
-  /**
-   * Maps given points to their cluster indices.
-   */
-  def fuzzyPredict(points: RDD[Vector]): RDD[Seq[(Int, Double)]] = {
-    val centersWithNorm = clusterCentersWithNorm
-    val bcCentersWithNorm = points.context.broadcast(centersWithNorm)
-    val bcm = points.context.broadcast(m)
-    points.map { p =>
-      val localCentersWithNorm = bcCentersWithNorm.value.toArray
-        // Sort clusters by distance from the beginning of coordinates
-        // Helps to persist order for iterating runs
-        .sortBy(_.norm)
-      val localM = bcm.value
-      FuzzyCMeans.degreesOfMembership(
-        localCentersWithNorm,
-        new VectorWithNorm(p),
-        localM)._1.zipWithIndex.map(_.swap)
-    }
+    val centersWithNorm = clusterCenters
+    val bcCenters = points.context.broadcast(centersWithNorm)
+    points.map(p => UMicro.findClosest(bcCenters.value, new VectorWithNorm(p))._1)
   }
 
   /**
@@ -84,20 +50,7 @@ class UMicroModel(val fmic: Array[UncertainCluster],
   def predict(points: JavaRDD[Vector]): JavaRDD[java.lang.Integer] =
     predict(points.rdd).toJavaRDD().asInstanceOf[JavaRDD[java.lang.Integer]]
 
-  /**
-   * Return the cost (sum of squared distances of points to their nearest center) for this
-   * model on the given data.
-   */
-  def computeCost(data: RDD[Vector]): Double = {
-    val centersWithNorm = clusterCentersWithNorm
-    val bcCentersWithNorm = data.context.broadcast(centersWithNorm)
-    data.map(p => FuzzyCMeans.pointCost(bcCentersWithNorm.value, new VectorWithNorm(p))).sum()
-  }
-
-  private def clusterCentersWithNorm: Iterable[VectorWithNorm] =
-    fmic.map(_.c)
-
-
-  def getFMiC = fmic
+  private def clusterCenters: Iterable[VectorWithNorm] =
+    uncertainClusters.map(_.expectedClusterCenter).map(new VectorWithNorm(_))
 
 }

@@ -23,9 +23,18 @@ class UMicro private(
   // standard deviation = 3
   def this() = this(2, 3.0)
 
+  def setN(value: Int): this.type = {
+    require(value >= 2)
+    nMicro = value
+    this
+  }
+
+  def getN = nMicro
+
+  def getThreshold = threshold
 
   def setThreshold(value: Double): this.type = {
-    require(value >= 0)
+    require(value > 0)
     threshold = value
     this
   }
@@ -85,6 +94,7 @@ class UMicro private(
     // HAD to use .collect() to execute on driver
     // because it actively uses a array updates
 
+
     val finalFMICs = data.map(new UncertainCluster(_))
       .map(ArrayBuffer(_))
       .fold(initCluster)((acc, clusters) => {
@@ -92,21 +102,38 @@ class UMicro private(
         clusters.foreach(cluster => {
 
           if (acc.length < nMicro) {
+            cluster.touch()
             acc.append(cluster)
           }
           else {
 
-            val (minCluster, minDistance) = acc.map(r => (r, r.distance(cluster))).minBy(_._2)
+            val pairs = acc.map(r => (r, r.expectedDistance(cluster)))
 
+            val (minCluster, minDistance) = pairs.minBy(_._2)
 
+            val expectedSimilarity = minCluster.expectedSimilarity(cluster)
 
+            // if inside critical uncertain border
+            if ( expectedSimilarity < threshold) {
+              minCluster.addPoint(cluster)
+            }
+            else {
+              // Set current time
+              cluster.touch()
+              acc.append(cluster)
+            }
+
+            // remove the least recently updated clusers
+            if (acc.length >= nMicro + 1) {
+              val oldestTimestamp = acc.map(_.getTime).min
+              acc --= acc.filter(_.getTime == oldestTimestamp)
+            }
           }
+        })
 
         acc
 
       })
-
-    println(finalFMICs)
 
     new UMicroModel(
       finalFMICs.toArray
@@ -121,11 +148,9 @@ object UMicro {
    * Trains a d-FuzzyStream model using the given set of parameters.
    *
    * @param data training points stored as `RDD[Vector]`
-   * @param m    fuzzyfier, between 1 and infinity, default is 2, 1 leads to hard clustering
    */
   def train(
-             data: RDD[Vector],
-             m: Double): UMicroModel = {
+             data: RDD[Vector]): UMicroModel = {
     new clustering.UMicro()
       .run(data)
   }
@@ -134,13 +159,47 @@ object UMicro {
    * Trains a d-FuzzyStream model using the given set of parameters.
    *
    * @param data training points stored as `RDD[Vector]`
-   * @param m    fuzzyfier, between 1 and infinity, default is 2, 1 leads to hard clustering
+   * @n number of uncertain cluster to produce
    */
   def train(
              data: RDD[Vector],
-             m: Double,
+             n: Int): UMicroModel = {
+    new clustering.UMicro()
+      .setN(n)
+      .run(data)
+  }
+
+
+  /**
+   * Trains a d-FuzzyStream model using the given set of parameters.
+   *
+   * @param data training points stored as `RDD[Vector]`
+   * @n number of uncertain cluster to produce
+   * @threshold critical uncertain boundary value
+   */
+  def train(
+             data: RDD[Vector],
+             n: Int,
+             threshold: Double): UMicroModel = {
+    new clustering.UMicro()
+      .setN(n)
+      .setThreshold(threshold)
+      .run(data)
+  }
+
+  /**
+   * Trains a d-FuzzyStream model using the given set of parameters.
+   *
+   * @param data training points stored as `RDD[Vector]`
+   * @n number of uncertain cluster to produce
+   * @initialModel Initial uncertain clusters to use
+   */
+  def train(
+             data: RDD[Vector],
+             n: Int,
              initialModel: Array[UncertainCluster]): UMicroModel = {
     new clustering.UMicro()
+      .setN(n)
       .setInitialModel(initialModel.to[ArrayBuffer])
       .run(data)
   }
@@ -232,21 +291,24 @@ object UMicro {
 
 /**
  *
- * @param ef  sum of squares of errors, actually, is stored as norm-1 vector, access to real ef through EF func
  * @param cf1 sum of data points over each d-dimensions, norm-1 vector, access to to real values
  *            through CF1 and CF2  function
  * @param N   number of data points in uncertain cluster
  * @param t   time of last updates
  */
 case class UncertainCluster(private var cf2: Vector,
-                            private var ef1: Vector,
+                            private var ef2: Vector,
                             private var cf1: Vector,
                             private var N: Long,
-                            private var t: Date,
-                           ) extends Serializable {
+                            private var t: Date) extends Serializable {
 
-  def this(point: Vector) = this(Vectors.dense(point.toArray.map(Math.pow(_,2.0))),
-    Vectors.dense(Array.fill(point.size)(0.0)), point.copy, 1, Calendar.getInstance.getTime)
+  def this(point: Vector) =
+    this(
+      Vectors.dense(point.toArray.map(Math.pow(_, 2.0))),
+      Vectors.dense(Array.fill(point.size)(0.0)),
+      point.copy,
+      1L,
+      Calendar.getInstance.getTime)
 
   def getN = N
 
@@ -257,62 +319,63 @@ case class UncertainCluster(private var cf2: Vector,
     this
   }
 
-  private def pow2(vec: Vector) = Vectors.dense(vec.toArray.map(Math.pow(_,2.0)))
+  private def sumVec(vec: Vector) = vec.toArray.sum
 
-  def ef2 = pow2(ef1)
+  private def powVec(vec: Vector, level: Double = 2.0) = Vectors.dense(vec.toArray.map(Math.pow(_, level)))
 
-  def expectedClusterCenter = {
-    val centroid = cf1.copy
-    val copyEr = ef1.copy
-
-    scal(1 / N, centroid)
-    scal(1 / N, copyEr)
-
-    axpy(1.0, copyEr, centroid)
-
-    centroid
+  def addPoint(point: Vector): Unit = {
+    touch()
+    axpy(1.0, point, cf1)
+    axpy(1.0, powVec(point), cf2)
+    axpy(1.0, powVec(getErrorVector(point)), ef2)
+    N += 1
   }
 
-  def uncertainRadius(dataPoint: Vector) = distance(dataPoint)
+  def addPoint(cluster: UncertainCluster): Unit = addPoint(cluster.expectedClusterCenter)
 
-  def uncertainRadius(cluster: UncertainCluster) = distance(cluster.expectedClusterCenter)
+  def expectedClusterCenter = {
 
-  def distance(cluster: UncertainCluster) = distance(cluster.expectedClusterCenter)
-
-  def distance(dataPoint: Vector) = {
-
-    val distance = Vectors.dense(Array.fill(dataPoint.size)(0.0))
+    val center = Vectors.dense(Array.fill(cf1.size)(0.0))
 
     val cf1_loc = cf1.copy
-    val ef2_loc = ef2.copy
+    val ef1_loc = powVec(ef2.copy, 0.5)
+
+    axpy(1 / N, cf1_loc, center)
+    axpy(1 / N, ef1_loc, center)
+
+    center
+  }
+
+  def expectedSimilarity(dataPoint: Vector) = {
+
+    // Lemma 2.1
+    sumVec(cf2) / Math.pow(N, 2.0) + sumVec(powVec(getErrorVector(dataPoint))) / Math.pow(N, 2.0)
+  }
+
+  def expectedSimilarity(cluster: UncertainCluster): Double = expectedSimilarity(cluster.expectedClusterCenter)
+
+  def touch() = setTime(Calendar.getInstance.getTime)
+
+  def expectedDistance(cluster: UncertainCluster): Double = expectedDistance(cluster.expectedClusterCenter)
+
+  def expectedDistance(dataPoint: Vector) = {
+
     val error_loc = getErrorVector(dataPoint)
-
-
-    // Expected value term
-    axpy(1/Math.pow(N,2.0),pow2(cf1_loc), distance)
-
-    axpy(1/Math.pow(N,2.0),pow2(ef2_loc), distance)
-
-    axpy(1.0,pow2(dataPoint), distance)
-
-    axpy(1.0,pow2(error_loc), distance)
 
     val interm = {
       val a = dataPoint.toArray
       val b = cf1.toArray
 
-      Vectors.dense(a.zip(b).map(pair => pair._1 * pair._2))
+      (a.zip(b).map(pair => pair._1 * pair._2)).sum
     }
 
-    axpy(-2.0/N,interm, distance)
-
-    // sum
-    Vectors.norm(distance, 1.0)
+    // Lemma 2.2
+    expectedSimilarity(dataPoint)+ sumVec(powVec(dataPoint)) + sumVec(powVec(error_loc)) - 2 * interm / N
 
   }
 
   private def getErrorVector(dataPoint: Vector) = {
-    val errorVector = expectedClusterCenter
+    val errorVector = cf1.copy
 
     axpy(-1.0, dataPoint, errorVector)
 
@@ -320,5 +383,19 @@ case class UncertainCluster(private var cf2: Vector,
 
   }
 
+}
 
+
+case class nMicroAccumulator(var count: Int = 0) extends AccumulatorV2[Int, Int] {
+  override def isZero: Boolean = count == 0
+
+  override def copy(): AccumulatorV2[Int, Int] = new nMicroAccumulator(count)
+
+  override def reset(): Unit = count = 0
+
+  override def add(v: Int): Unit = count += 1
+
+  override def merge(other: AccumulatorV2[Int, Int]): Unit = count += other.value
+
+  override def value: Int = count
 }
