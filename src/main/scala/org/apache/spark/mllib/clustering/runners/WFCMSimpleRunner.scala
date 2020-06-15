@@ -1,8 +1,8 @@
-package org.apache.spark
+package org.apache.spark.mllib.clustering.runners
 
-import org.apache.spark.mllib.clustering.KMeans.{K_MEANS_PARALLEL, RANDOM}
 import org.apache.spark.mllib.clustering.WeightedFuzzyCMeans
 import org.apache.spark.mllib.linalg.Vectors
+import org.apache.spark.{SparkConf, SparkContext}
 
 object WFCMSimpleRunner {
 

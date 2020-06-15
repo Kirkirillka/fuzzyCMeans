@@ -1,7 +1,8 @@
-package org.apache.spark
+package org.apache.spark.mllib.clustering.runners
 
-import org.apache.spark.mllib.clustering.{StreamingFuzzyCMeans, StreamingFuzzyCMeansModel, WeightedFuzzyCMeans}
+import org.apache.spark.mllib.clustering.StreamingFuzzyCMeans
 import org.apache.spark.mllib.linalg.Vectors
+import org.apache.spark.{SparkConf, SparkContext}
 
 import scala.collection.mutable.ArrayBuffer
 
