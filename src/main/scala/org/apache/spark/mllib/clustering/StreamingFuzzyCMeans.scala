@@ -24,8 +24,8 @@ import org.apache.spark.mllib.linalg.{Vector, Vectors}
 import org.apache.spark.mllib.util.MLUtils
 import org.apache.spark.rdd.RDD
 import org.apache.spark.storage.StorageLevel
+import org.apache.spark.util.Utils
 import org.apache.spark.util.random.XORShiftRandom
-import org.apache.spark.util.{AccumulatorV2, Utils}
 
 import scala.collection.mutable.ArrayBuffer
 
@@ -45,6 +45,7 @@ class StreamingFuzzyCMeans private(
                                     private var k: Int,
                                     private var m: Double,
                                     private var maxIterations: Int,
+                                    private var historyDepth:Int,
                                     private var initializationMode: String,
                                     private var initializationSteps: Int,
                                     private var epsilon: Double,
@@ -55,7 +56,7 @@ class StreamingFuzzyCMeans private(
    * Constructs a StreamingFuzzyCMeans instance with default parameters: {k: 2, m: 2, maxIterations: 20, runs: 1,
    * initializationMode: "k-means||", initializationSteps: 5, epsilon: 1e-4, seed: random}.
    */
-  def this() = this(2, 2, 1, KMeans.K_MEANS_PARALLEL, 5, 1e-4, Utils.random.nextLong())
+  def this() = this(2, 2, 1, 3, KMeans.K_MEANS_PARALLEL, 5, 1e-4, Utils.random.nextLong())
 
   /**
    * Number of clusters to create (k).
@@ -98,6 +99,20 @@ class StreamingFuzzyCMeans private(
    */
   def setMaxIterations(maxIterations: Int): this.type = {
     this.maxIterations = maxIterations
+    this
+  }
+
+  /**
+   * Maximum depth of historical models to use
+   */
+  def getHistoryDepth: Int = historyDepth
+
+  /**
+   * Set maximum depth of historical models to use
+   */
+  def setHistoryDepth(maxDepth: Int): this.type = {
+    require(maxDepth > 0)
+    this.historyDepth = maxDepth
     this
   }
 
@@ -218,7 +233,7 @@ class StreamingFuzzyCMeans private(
 
     val historicalModels = initialModel match {
       case Some(models) => {
-        models
+        models.takeRight(getHistoryDepth)
       }
       case None => ArrayBuffer.empty[StreamingFuzzyCMeansModel]
     }
@@ -258,10 +273,10 @@ class StreamingFuzzyCMeans private(
     // Execute iterations of Lloyd's algorithm until all runs have converged
     while (iteration < maxIterations && !allCenterConverged.forall(_ == true)) {
 
-      type WeightedPoint = (Vector, Double)
+      type StreamingPoint = (Vector, Double)
 
       // this is the function that will be used in the reduce phase
-      def mergeContribs(x: WeightedPoint, y: WeightedPoint): WeightedPoint = {
+      def mergeContribs(x: StreamingPoint, y: StreamingPoint): StreamingPoint = {
         // y += a * x
         // - in this case y += x
         axpy(1.0, x._1, y._1)
@@ -531,7 +546,7 @@ class StreamingFuzzyCMeans private(
 
     // Finally, we might have a set of more than k candidate centers for each run; weigh each
     // candidate by the number of points in the dataset mapping to it and run a local k-means++
-    // on the weighted centers to pick just k of them
+    // on the Streaming centers to pick just k of them
     val bcCenters = data.context.broadcast(centers)
     val weightMap = data.flatMap { p =>
       Iterator.tabulate(1) { r =>
@@ -553,7 +568,7 @@ class StreamingFuzzyCMeans private(
 
 
 /**
- * Top-level methods for calling Weighted Fuzzy C-means clustering.
+ * Top-level methods for calling Streaming Fuzzy C-means clustering.
  */
 object StreamingFuzzyCMeans {
 
@@ -564,7 +579,7 @@ object StreamingFuzzyCMeans {
 
 
   /**
-   * Trains a Weighted fuzzy c-means model using the given set of parameters.
+   * Trains a Streaming fuzzy c-means model using the given set of parameters.
    *
    * @param data          training points stored as `RDD[Vector]`
    * @param k             number of clusters
@@ -582,9 +597,31 @@ object StreamingFuzzyCMeans {
       .run(data)
   }
 
+  /**
+   * Trains a Streaming fuzzy c-means model using the given set of parameters.
+   *
+   * @param data          training points stored as `RDD[Vector]`
+   * @param k             number of clusters
+   * @param maxIterations max number of iterations
+   * @param initialModel  initial WFCM model for weight initialization
+   * @param historyDepth  size of historical model to use
+   */
+  def train(
+             data: RDD[Vector],
+             k: Int,
+             maxIterations: Int,
+             initialModel: ArrayBuffer[StreamingFuzzyCMeansModel],
+             historyDepth: Int): StreamingFuzzyCMeansModel = {
+    new StreamingFuzzyCMeans().setK(k)
+      .setMaxIterations(maxIterations)
+      .setInitialModel(initialModel)
+      .setHistoryDepth(historyDepth)
+      .run(data)
+  }
+
 
   /**
-   * Trains a Weighted fuzzy c-means model using the given set of parameters.
+   * Trains a Streaming fuzzy c-means model using the given set of parameters.
    *
    * @param data               training points stored as `RDD[Vector]`
    * @param k                  number of clusters

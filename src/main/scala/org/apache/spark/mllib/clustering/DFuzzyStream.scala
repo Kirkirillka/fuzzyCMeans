@@ -9,7 +9,6 @@ import org.apache.spark.mllib.linalg.{Vector, Vectors}
 import org.apache.spark.mllib.util.MLUtils
 import org.apache.spark.rdd.RDD
 import org.apache.spark.storage.StorageLevel
-import org.apache.spark.util.AccumulatorV2
 
 import scala.collection.mutable.ArrayBuffer
 
@@ -272,6 +271,7 @@ object DFuzzyStream {
    *
    * @param data training points stored as `RDD[Vector]`
    * @param m    fuzzyfier, between 1 and infinity, default is 2, 1 leads to hard clustering
+   * @param initialModel a set of already found FuzzyCluster to use
    */
   def train(
              data: RDD[Vector],
@@ -282,6 +282,31 @@ object DFuzzyStream {
       .setInitialModel(initialModel.to[ArrayBuffer])
       .run(data)
   }
+
+  /**
+   * Trains a d-FuzzyStream model using the given set of parameters.
+   *
+   * @param data training points stored as `RDD[Vector]`
+   * @param m    fuzzyfier, between 1 and infinity, default is 2, 1 leads to hard clustering
+   * @param initialModel a set of already found FuzzyCluster to use
+   * @param minFmic    minimum number of fuzzy clusters to produce
+   * @param maxFmic    maximum number of fuzzy clusters to produce
+   */
+  def train(
+             data: RDD[Vector],
+             m: Double,
+             initialModel: Array[FuzzyCluster],
+             minFmic: Int,
+             maxFmic: Int): DFuzzyStreamModel = {
+    new clustering.DFuzzyStream()
+      .setM(m)
+      .setMinFMiC(minFmic)
+      .setMaxFMiC(maxFmic)
+      .setInitialModel(initialModel.to[ArrayBuffer])
+      .run(data)
+  }
+
+
 
 
   /**

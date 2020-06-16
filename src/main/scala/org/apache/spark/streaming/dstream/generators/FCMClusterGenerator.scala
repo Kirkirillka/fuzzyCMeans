@@ -24,7 +24,7 @@ case class FCMClusterGenerator(override val source: StreamSource[Vector],
 
     val cxt = session.sparkContext
 
-    val pointSink = _toPostgresSQL(DefaultJDBCParams)
+    val pointSink = _toPostgresSQL(DataPointsSaverJDBCParams)
     val clusterSink = _toPostgresSQL(ClusterSaverJDBCParams)
 
     Pipeline.fromSource(source, session, window)
@@ -35,7 +35,7 @@ case class FCMClusterGenerator(override val source: StreamSource[Vector],
 
       val nextIter = FuzzyCMeans.train(rdd,k,maxIterations)
 
-      // Save clusters to DB
+      // Save FuzzyClusters to DB
       val _clusters = cxt.parallelize(nextIter.clusterCenters)
       clusterSink(_clusters)
 

@@ -41,4 +41,72 @@ object Utils {
 
   }
 
+  val DataPointsSaverJDBCParams: JDBCParams = {
+
+    val defaultConf = DefaultJDBCParams
+
+    defaultConf.updated("dbtable","points")
+
+  }
+
+  object SFCMDefaultClusterAlgorithmsParams {
+
+    val SFCMClusterSaverJDBCParams: JDBCParams = {
+
+      val defaultConf = DefaultJDBCParams
+
+      defaultConf.updated("dbtable","SFCM_clusters")
+
+    }
+
+    val SFCMDataPointsSaverJDBCParams: JDBCParams = {
+
+      val defaultConf = DefaultJDBCParams
+
+      defaultConf.updated("dbtable","SFCM_points")
+
+    }
+
+  }
+
+  object UMicroDefaultClusterAlgorithmsParams {
+
+    val UMicroClusterSaverJDBCParams: JDBCParams = {
+
+      val defaultConf = DefaultJDBCParams
+
+      defaultConf.updated("dbtable","UMicro_clusters")
+
+    }
+
+    val UMicroDataPointsSaverJDBCParams: JDBCParams = {
+
+      val defaultConf = DefaultJDBCParams
+
+      defaultConf.updated("dbtable","UMicro_points")
+
+    }
+
+  }
+
+
+  object dFuzzyStreamDefaultClusterAlgorithmsParams {
+
+    val dFuzzyStreamClusterSaverJDBCParams: JDBCParams = {
+
+      val defaultConf = DefaultJDBCParams
+
+      defaultConf.updated("dbtable","dFuzzyStream_clusters")
+
+    }
+
+    val dFuzzyStreamDataPointsSaverJDBCParams: JDBCParams = {
+
+      val defaultConf = DefaultJDBCParams
+
+      defaultConf.updated("dbtable","dFuzzyStream_points")
+
+    }
+
+  }
 }

@@ -3,8 +3,8 @@ package org.apache.spark.streaming.adapters
 import org.apache.spark.mllib.linalg.Vector
 import org.apache.spark.rdd.RDD
 import org.apache.spark.sql.{SaveMode, SparkSession}
-import org.apache.spark.streaming.adapters.Models.ClusterRecord
 import org.apache.spark.streaming.dstream.generators.Utils.{JDBCParams, KafkaParams}
+import org.apache.spark.streaming.adapters.Transform.castToTimestampVector
 
 object Outputs {
 
@@ -12,12 +12,10 @@ object Outputs {
 
     val ss = SparkSession.builder().sparkContext(data.sparkContext).getOrCreate()
     import ss.implicits._
-    // Append time of new entries added
-    val currentTime = java.time.LocalDateTime.now().toString
 
-    data
+    castToTimestampVector(data)
       // use case class ClusterRecord to add user-friendly names for columns being saved
-      .map(_.toArray).map(ClusterRecord(currentTime,_)).toDS()
+      .toDS()
       .write
       .format("jdbc")
       .option("driver", "org.postgresql.Driver")
@@ -65,6 +63,40 @@ object Outputs {
 
   def toFuzzyClusterPrint(data: RDD[Vector],
                                fuzzyPredicts:  RDD[Seq[(Int, Double)]] ) = {
+
+    data zip fuzzyPredicts foreach { fuzzyPredict =>
+      println(s" Point ${fuzzyPredict._1}")
+      fuzzyPredict._2 foreach{clusterAndProbability =>
+        println(s"Probability to belong to cluster ${clusterAndProbability._1} " +
+          s"is ${"%.2f".format(clusterAndProbability._2)}")
+      }
+    }
+
+    data
+  }
+
+  def toClusterPrint(data: RDD[Vector],
+                          predicts:  RDD[Int] ) = {
+
+    data.zipWithIndex zip predicts foreach { predict =>
+      println(s"${predict._1._2} Point ${predict._1._1} is in ${predict._2}")
+
+    }
+
+    data
+  }
+
+
+
+
+
+
+  def fuzzyResultSaveToPostgreSQL(data: RDD[Vector],
+                          fuzzyPredicts:  RDD[Seq[(Int, Double)]] , dataSinkParams: JDBCParams,
+                                  clusterSinkParams: JDBCParams) = {
+
+
+
 
     data zip fuzzyPredicts foreach { fuzzyPredict =>
       println(s" Point ${fuzzyPredict._1}")
