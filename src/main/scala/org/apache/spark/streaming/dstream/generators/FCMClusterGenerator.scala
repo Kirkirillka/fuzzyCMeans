@@ -1,15 +1,17 @@
 package org.apache.spark.streaming.dstream.generators
 
 import org.apache.spark.internal.Logging
-import org.apache.spark.mllib.clustering.FuzzyCMeans
-import org.apache.spark.mllib.linalg.{Vectors, Vector}
+import org.apache.spark.mllib.clustering.{FuzzyCMeans}
+import org.apache.spark.mllib.linalg.Vector
 import org.apache.spark.sql.SparkSession
+import org.apache.spark.streaming.adapters.Outputs._
+import org.apache.spark.streaming.adapters.Pipeline
+import org.apache.spark.streaming.dstream.generators.Utils._
 import org.apache.spark.streaming.sources.StreamSource
 
-class FCMClusterGenerator(override val source: StreamSource[Vector],
-                          override val session: SparkSession,
-                          val window: Int = 60
-                       ) extends StreamGenerator[Vector](source,session) with Logging {
+case class FCMClusterGenerator(override val source: StreamSource[Vector],
+                          override val session: SparkSession, window: Int = 30
+                         ) extends StreamGenerator[Vector](source, session) with Logging {
 
   val k = 3
   val m = 1
@@ -20,29 +22,28 @@ class FCMClusterGenerator(override val source: StreamSource[Vector],
    */
   override def run(): Unit = {
 
-    val ss = session
+    val cxt = session.sparkContext
 
-    this.source.sliding(window).foreach(chunk => {
+    val pointSink = _toPostgresSQL(DefaultJDBCParams)
+    val clusterSink = _toPostgresSQL(ClusterSaverJDBCParams)
 
-      logInfo(s"Reached ${chunk.length} new records. Writing to Kafka.")
-
-      val rdd = ss.sparkContext.parallelize(chunk.map(x => Vectors.dense(x.toArray)))
+    Pipeline.fromSource(source, session, window)
+      // Save to Postgres
+      .map(pointSink(_))
+      // Generate Clusters
+      .map(rdd => {
 
       val nextIter = FuzzyCMeans.train(rdd,k,maxIterations)
 
-      val fuzzyPredicts = nextIter.fuzzyPredict(rdd).collect()
+      // Save clusters to DB
+      val _clusters = cxt.parallelize(nextIter.clusterCenters)
+      clusterSink(_clusters)
 
-      rdd.collect() zip fuzzyPredicts foreach { fuzzyPredict =>
-        println(s" Point ${fuzzyPredict._1}")
-        fuzzyPredict._2 foreach{clusterAndProbability =>
-          println(s"Probability to belong to cluster ${clusterAndProbability._1} " +
-            s"is ${"%.2f".format(clusterAndProbability._2)}")
-        }
-      }
+      val fuzzyPredicts = nextIter.fuzzyPredict(rdd)
 
-
-      logInfo(s"Sleep for ${timeout}")
-      Thread.sleep(timeout)
-    })}
+       (rdd,fuzzyPredicts)
+      })
+      .foreach(x => toFuzzyClusterPrint(x._1, x._2))
+  }
 
 }

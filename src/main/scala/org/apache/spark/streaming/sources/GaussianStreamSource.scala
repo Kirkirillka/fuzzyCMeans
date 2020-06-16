@@ -10,7 +10,7 @@ import org.apache.spark.mllib.linalg.{Vectors, Vector}
  * @param mu - mean
  * @param sigma - variance
  */
-class GaussianStreamSource(val dim: Int,
+case class GaussianStreamSource(val dim: Int,
                                 val mu: Double,
                                 val sigma: Double) extends StreamSource[Vector](dim){
 
@@ -27,5 +27,8 @@ class GaussianStreamSource(val dim: Int,
    * @return a 'dim' dimensional Vector
    */
   override def next(): Vector = Vectors.dense(dist.sample(dim).toArray)
+
+
+  override def toStream = Stream.continually(this.next())
 
 }

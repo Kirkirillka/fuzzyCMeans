@@ -9,7 +9,7 @@ import org.apache.spark.streaming.sources.GaussianStreamSource
 
 object FCMClusterGeneratorRunner {
 
-  val dim = 5
+  val dim = 3
   val mu = 2
   val variance = 3
   val logger = Logger(this.getClass.getName)
@@ -26,13 +26,8 @@ object FCMClusterGeneratorRunner {
       .appName(name = this.getClass.getName)
       .getOrCreate()
 
-    logger.info("Instantiating Gaussian Generator to save the data into Kafka sink.")
-    val source = new GaussianStreamSource(dim, mu, variance)
-    val stream = new FCMClusterGenerator(source,ss)
-
-    // Set timeout between firing
-    val timeout  = conf.getLong("generators.timeout")
-    stream.timeout = timeout
+    val source = GaussianStreamSource(dim, mu, variance)
+    val stream = FCMClusterGenerator(source,ss)
 
     logger.info("Starting Gaussian Kafka Stream!")
     stream.run()

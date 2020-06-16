@@ -33,4 +33,12 @@ object Utils {
     )
   }
 
+  val ClusterSaverJDBCParams: JDBCParams = {
+
+    val defaultConf = DefaultJDBCParams
+
+    defaultConf.updated("dbtable","clusters")
+
+  }
+
 }
