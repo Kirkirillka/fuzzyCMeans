@@ -9,15 +9,17 @@ import org.apache.spark.streaming.sources.GaussianStreamSource
 
 object FCMClusterGeneratorRunner {
 
-  val dim = 3
-  val mu = 2
-  val variance = 3
-  val logger = Logger(this.getClass.getName)
+  private val logger = Logger(this.getClass.getName)
 
   def main(args: Array[String]): Unit = {
 
     logger.info("Loading configuration")
     val conf: Config = ConfigFactory.load()
+
+    val dim = conf.getInt("streaming.synthetic.dim")
+    val window = conf.getInt("streaming.synthetic.window")
+    val mu = conf.getDouble("streaming.synthetic.gaussian.mu")
+    val variance = conf.getDouble("streaming.synthetic.gaussian.sigma")
 
 
     logger.info("Initializing Apache Spark session.")
@@ -27,7 +29,7 @@ object FCMClusterGeneratorRunner {
       .getOrCreate()
 
     val source = GaussianStreamSource(dim, mu, variance)
-    val stream = FCMClusterGenerator(source,ss)
+    val stream = FCMClusterGenerator(source,ss,window)
 
     logger.info("Starting Gaussian Kafka Stream!")
     stream.run()

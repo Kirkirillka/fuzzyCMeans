@@ -3,8 +3,8 @@ package org.apache.spark.mllib.clustering
 import java.util.{Calendar, Date}
 
 import org.apache.spark.internal.Logging
-import org.apache.spark.mllib.{clustering, linalg}
-import org.apache.spark.mllib.linalg.BLAS.{axpy, dot, scal}
+import org.apache.spark.mllib.clustering
+import org.apache.spark.mllib.linalg.BLAS.axpy
 import org.apache.spark.mllib.linalg.{Vector, Vectors}
 import org.apache.spark.mllib.util.MLUtils
 import org.apache.spark.rdd.RDD
@@ -240,50 +240,6 @@ object UMicro {
                                                v1: VectorWithNorm,
                                                v2: VectorWithNorm): Double = {
     MLUtils.fastSquaredDistance(v1.vector, v1.norm, v2.vector, v2.norm)
-  }
-
-  /**
-   * Returns the degree of membership of the point to each of the clusters
-   * Along with the array of distances from the point to each centroid
-   */
-  private[mllib] def degreesOfMembership(
-                                          centers: Array[VectorWithNorm],
-                                          point: VectorWithNorm,
-                                          fuzzifier: Double): (Array[Double], Array[Double]) = {
-
-    if (fuzzifier == 1) {
-
-      // This is classical hard clustering
-      val (bestIndex, bestDistance) = findClosest(centers, point)
-      val distances = Array.fill(centers.length)(0.0)
-      val membershipDegrees = distances
-      distances(bestIndex) = bestDistance
-      membershipDegrees(bestIndex) = 1
-      (membershipDegrees, distances)
-
-    } else {
-
-      // Distances from the point to each centroid
-      val distances = centers map (fastSquaredDistance(_, point))
-
-      val perfectMatches = distances.count(d => d == 0.0)
-      if (perfectMatches > 0) {
-        // If at least one of the distances is 0 the membership divides between
-        // the perfect matches
-        (distances map (d => if (d == 0.0) 1.0 / perfectMatches else 0.0), distances)
-      } else {
-        // Standard formula
-        // $w_{ij} = \frac{1}{\sum...}
-
-        // pow = \frac{2}{m-1}
-        val pow = 2.0 / (fuzzifier - 1.0)
-        // d = \sum{k=1}{c}(\frac{||x_i - c_j||}{||x_i - c_l||})
-        val denom = distances.foldLeft(0.0)((sum, dik) => sum + Math.pow(1 / dik, pow))
-
-        // $w_{ij} = \frac{1}{d^pow}$
-        (distances map (dij => 1 / (Math.pow(dij, pow) * denom)), distances)
-      }
-    }
   }
 
 

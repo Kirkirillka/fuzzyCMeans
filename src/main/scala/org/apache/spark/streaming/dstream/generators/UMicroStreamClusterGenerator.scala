@@ -1,5 +1,6 @@
 package org.apache.spark.streaming.dstream.generators
 
+import com.typesafe.config.{Config, ConfigFactory}
 import org.apache.spark.internal.Logging
 import org.apache.spark.mllib.clustering.{UMicro, UncertainCluster}
 import org.apache.spark.mllib.linalg.Vector
@@ -13,9 +14,9 @@ case class UMicroStreamClusterGenerator(override val source: StreamSource[Vector
                                         override val session: SparkSession, window: Int = 30
                                ) extends StreamGenerator[Vector](source, session) with Logging {
 
-  val m = 1
-  val maxK = 5
-  val history = 3
+  val conf: Config = ConfigFactory.load()
+
+  private val maxK = conf.getInt("streaming.algorithm.k_max")
 
   /**
    * Blocking function that start streaming
@@ -26,11 +27,12 @@ case class UMicroStreamClusterGenerator(override val source: StreamSource[Vector
 
     val pointSink = _toPostgresSQL(UMicroDataPointsSaverJDBCParams)
     val clusterSink = _toPostgresSQL(UMicroClusterSaverJDBCParams)
+    val predictSink = toCrispPredictionResultSaveToPostgreSQL(UMicroFuzzyPredictSaverJDBCParams)
 
     var lastClusters = Array.empty[UncertainCluster]
 
     Pipeline.fromSource(source, session, window)
-      // Save to Postgres
+      // Save raw data points in Postgres
       .map(pointSink(_))
       // Generate Clusters
       .map(rdd => {
@@ -40,7 +42,7 @@ case class UMicroStreamClusterGenerator(override val source: StreamSource[Vector
         // use found fuzzy clusters for the next iteration
         lastClusters = nextIter.uncertainClusters
 
-        // Save FuzzyClusters to DB
+        // Save clusters separately to DB
         val _clusters = cxt.parallelize(nextIter.uncertainClusters.map(_.expectedClusterCenter))
         clusterSink(_clusters)
 
@@ -48,6 +50,8 @@ case class UMicroStreamClusterGenerator(override val source: StreamSource[Vector
 
         (rdd, predicts)
       })
+      // Save predictions in Postgres
+      .map(x => predictSink(x._1,x._2))
       .foreach(x => toClusterPrint(x._1, x._2))
   }
 

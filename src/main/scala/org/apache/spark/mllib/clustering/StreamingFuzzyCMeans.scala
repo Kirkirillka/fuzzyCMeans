@@ -619,6 +619,32 @@ object StreamingFuzzyCMeans {
       .run(data)
   }
 
+  /**
+   * Trains a Streaming fuzzy c-means model using the given set of parameters.
+   *
+   * @param data          training points stored as `RDD[Vector]`
+   * @param k             number of clusters
+   * @param maxIterations max number of iterations
+   * @param initialModel  initial WFCM model for weight initialization
+   * @param historyDepth  size of historical model to use
+   * @param m                  fuzzyfier, between 1 and infinity, default is 2, 1 leads to hard clustering
+   */
+  def train(
+             data: RDD[Vector],
+             k: Int,
+             maxIterations: Int,
+             initialModel: ArrayBuffer[StreamingFuzzyCMeansModel],
+             historyDepth: Int,
+             m: Double): StreamingFuzzyCMeansModel = {
+    new StreamingFuzzyCMeans().setK(k)
+      .setMaxIterations(maxIterations)
+      .setInitialModel(initialModel)
+      .setHistoryDepth(historyDepth)
+      .setM(m)
+      .run(data)
+  }
+
+
 
   /**
    * Trains a Streaming fuzzy c-means model using the given set of parameters.

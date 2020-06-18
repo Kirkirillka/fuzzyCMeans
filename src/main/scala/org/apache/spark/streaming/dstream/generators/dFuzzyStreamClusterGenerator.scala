@@ -1,5 +1,6 @@
 package org.apache.spark.streaming.dstream.generators
 
+import com.typesafe.config.{Config, ConfigFactory}
 import org.apache.spark.internal.Logging
 import org.apache.spark.mllib.clustering.{DFuzzyStream, FuzzyCluster}
 import org.apache.spark.mllib.linalg.Vector
@@ -13,11 +14,12 @@ case class dFuzzyStreamClusterGenerator(override val source: StreamSource[Vector
                                         override val session: SparkSession, window: Int = 30
                                ) extends StreamGenerator[Vector](source, session) with Logging {
 
-  val m = 1
-  val minK = 2
-  val maxK = 5
-  val history = 3
-  val maxIterations = 1000
+
+  val conf: Config = ConfigFactory.load()
+
+  private val m = conf.getDouble("streaming.algorithm.m")
+  private val minK = conf.getInt("streaming.algorithm.k_min")
+  private val maxK = conf.getInt("streaming.algorithm.k_max")
 
   /**
    * Blocking function that start streaming
@@ -28,21 +30,22 @@ case class dFuzzyStreamClusterGenerator(override val source: StreamSource[Vector
 
     val pointSink = _toPostgresSQL(dFuzzyStreamDataPointsSaverJDBCParams)
     val clusterSink = _toPostgresSQL(dFuzzyStreamClusterSaverJDBCParams)
+    val predictSink = toFuzzyPredictionResultSaveToPostgreSQL(dFuzzyStreamFuzzyPredictSaverJDBCParams)
 
     var lastClusters = Array.empty[FuzzyCluster]
 
     Pipeline.fromSource(source, session, window)
-      // Save to Postgres
+      // Save raw data points in Postgres
       .map(pointSink(_))
       // Generate Clusters
       .map(rdd => {
 
-        val nextIter = DFuzzyStream.train(rdd, maxIterations,lastClusters,minK,maxK)
+        val nextIter = DFuzzyStream.train(rdd,m,lastClusters,minK,maxK)
 
         // use found fuzzy clusters for the next iteration
         lastClusters = nextIter.getFMiC
 
-        // Save FuzzyClusters to DB
+        // Save clusters separately to DB
         val _clusters = cxt.parallelize(nextIter.getFMiC.map(_.c.vector))
         clusterSink(_clusters)
 
@@ -50,6 +53,8 @@ case class dFuzzyStreamClusterGenerator(override val source: StreamSource[Vector
 
         (rdd, fuzzyPredicts)
       })
+      // Save predictions in Postgres
+      .map(x => predictSink(x._1,x._2))
       .foreach(x => toFuzzyClusterPrint(x._1, x._2))
   }
 

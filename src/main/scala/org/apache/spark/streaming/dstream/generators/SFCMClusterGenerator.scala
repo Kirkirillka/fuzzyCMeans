@@ -1,5 +1,6 @@
 package org.apache.spark.streaming.dstream.generators
 
+import com.typesafe.config.{Config, ConfigFactory}
 import org.apache.spark.internal.Logging
 import org.apache.spark.mllib.clustering.{StreamingFuzzyCMeans, StreamingFuzzyCMeansModel}
 import org.apache.spark.mllib.linalg.Vector
@@ -11,14 +12,17 @@ import org.apache.spark.streaming.sources.StreamSource
 
 import scala.collection.mutable.ArrayBuffer
 
+
 case class SFCMClusterGenerator(override val source: StreamSource[Vector],
                                 override val session: SparkSession, window: Int = 30
                                ) extends StreamGenerator[Vector](source, session) with Logging {
 
-  val k = 4
-  val m = 1
-  val history = 3
-  val maxIterations = 1000
+  val conf: Config = ConfigFactory.load()
+
+  private val k = conf.getInt("streaming.algorithm.k_required")
+  private val m = conf.getDouble("streaming.algorithm.m")
+  private val history = conf.getInt("streaming.algorithm.history")
+  private val maxIterations = conf.getInt("streaming.algorithm.max_iterations")
 
   /**
    * Blocking function that start streaming
@@ -29,21 +33,22 @@ case class SFCMClusterGenerator(override val source: StreamSource[Vector],
 
     val pointSink = _toPostgresSQL(SFCMDataPointsSaverJDBCParams)
     val clusterSink = _toPostgresSQL(SFCMClusterSaverJDBCParams)
+    val predictSink = toFuzzyPredictionResultSaveToPostgreSQL(SFCMFuzzyPredictSaverJDBCParams)
 
     var historicalModel = ArrayBuffer.empty[StreamingFuzzyCMeansModel]
 
     Pipeline.fromSource(source, session, window)
-      // Save to Postgres
+      // Save raw data points in Postgres
       .map(pointSink(_))
       // Generate Clusters
       .map(rdd => {
 
-        val nextIter = StreamingFuzzyCMeans.train(rdd, k, maxIterations, historicalModel, history)
+        val nextIter = StreamingFuzzyCMeans.train(rdd, k ,maxIterations, historicalModel, history,m)
 
         // Additionally filter out-dated historical models
         historicalModel =  (historicalModel :+ nextIter).takeRight(history)
 
-        // Save FuzzyClusters to DB
+        // Save clusters separately to DB
         val _clusters = cxt.parallelize(nextIter.clusterCenters)
         clusterSink(_clusters)
 
@@ -51,6 +56,8 @@ case class SFCMClusterGenerator(override val source: StreamSource[Vector],
 
         (rdd, fuzzyPredicts)
       })
+      // Save predictions in Postgres
+      .map(x => predictSink(x._1,x._2))
       .foreach(x => toFuzzyClusterPrint(x._1, x._2))
   }
 

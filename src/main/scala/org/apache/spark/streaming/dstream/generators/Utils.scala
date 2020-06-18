@@ -33,19 +33,28 @@ object Utils {
     )
   }
 
-  val ClusterSaverJDBCParams: JDBCParams = {
+  val FCMClusterSaverJDBCParams: JDBCParams = {
 
     val defaultConf = DefaultJDBCParams
 
-    defaultConf.updated("dbtable","clusters")
+    defaultConf.updated("dbtable", "FCM_clusters")
 
   }
 
-  val DataPointsSaverJDBCParams: JDBCParams = {
+
+  val FCMDataPointsSaverJDBCParams: JDBCParams = {
 
     val defaultConf = DefaultJDBCParams
 
-    defaultConf.updated("dbtable","points")
+    defaultConf.updated("dbtable", "FCM_points")
+
+  }
+
+  val FCMFuzzyPredictSaverJDBCParams: JDBCParams = {
+
+    val defaultConf = DefaultJDBCParams
+
+    defaultConf.updated("dbtable", "FCM_predict")
 
   }
 
@@ -55,7 +64,7 @@ object Utils {
 
       val defaultConf = DefaultJDBCParams
 
-      defaultConf.updated("dbtable","SFCM_clusters")
+      defaultConf.updated("dbtable", "SFCM_clusters")
 
     }
 
@@ -63,7 +72,15 @@ object Utils {
 
       val defaultConf = DefaultJDBCParams
 
-      defaultConf.updated("dbtable","SFCM_points")
+      defaultConf.updated("dbtable", "SFCM_points")
+
+    }
+
+    val SFCMFuzzyPredictSaverJDBCParams: JDBCParams = {
+
+      val defaultConf = FCMFuzzyPredictSaverJDBCParams
+
+      defaultConf.updated("dbtable", "SFCM_predict")
 
     }
 
@@ -75,7 +92,7 @@ object Utils {
 
       val defaultConf = DefaultJDBCParams
 
-      defaultConf.updated("dbtable","UMicro_clusters")
+      defaultConf.updated("dbtable", "UMicro_clusters")
 
     }
 
@@ -83,7 +100,15 @@ object Utils {
 
       val defaultConf = DefaultJDBCParams
 
-      defaultConf.updated("dbtable","UMicro_points")
+      defaultConf.updated("dbtable", "UMicro_points")
+
+    }
+
+    val UMicroFuzzyPredictSaverJDBCParams: JDBCParams = {
+
+      val defaultConf = FCMFuzzyPredictSaverJDBCParams
+
+      defaultConf.updated("dbtable", "UMicro_predict")
 
     }
 
@@ -96,7 +121,7 @@ object Utils {
 
       val defaultConf = DefaultJDBCParams
 
-      defaultConf.updated("dbtable","dFuzzyStream_clusters")
+      defaultConf.updated("dbtable", "dFuzzyStream_clusters")
 
     }
 
@@ -104,9 +129,18 @@ object Utils {
 
       val defaultConf = DefaultJDBCParams
 
-      defaultConf.updated("dbtable","dFuzzyStream_points")
+      defaultConf.updated("dbtable", "dFuzzyStream_points")
+
+    }
+
+    val dFuzzyStreamFuzzyPredictSaverJDBCParams: JDBCParams = {
+
+      val defaultConf = FCMFuzzyPredictSaverJDBCParams
+
+      defaultConf.updated("dbtable", "dFuzzyStream_predict")
 
     }
 
   }
+
 }
