@@ -4,10 +4,9 @@ import com.typesafe.config.{Config, ConfigFactory}
 import com.typesafe.scalalogging.Logger
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.streaming.adapters.Pipeline
-import org.apache.spark.streaming.dstream.generators.FCMClusterGenerator
 
 
-object FCMClusterGeneratorRunner {
+object TestTrainDSGeneratorRunner {
 
   private val logger = Logger(this.getClass.getName)
 
@@ -16,10 +15,7 @@ object FCMClusterGeneratorRunner {
     logger.info("Loading configuration")
     val conf: Config = ConfigFactory.load()
 
-    val data_type = conf.getString("streaming.datasource")
-    val window = conf.getInt("streaming.synthetic.window")
-    val step = conf.getInt("streaming.synthetic.step")
-
+    val clusterAlgorithmName = "train_test"
 
     logger.info("Initializing Apache Spark session.")
     val ss = (SparkSession builder())
@@ -27,11 +23,11 @@ object FCMClusterGeneratorRunner {
       .appName(name = this.getClass.getName)
       .getOrCreate()
 
-    val source = Pipeline.getDataSource(data_type)
-    val stream = FCMClusterGenerator(source,ss,window,step)
+    logger.info(f"Use ${clusterAlgorithmName} as clustering algorithm")
+    val clusterStreamGenerator = Pipeline.getClusterDSGenerator(ss, clusterAlgorithmName)
 
     logger.info("Starting Gaussian Kafka Stream!")
-    stream.run()
+    clusterStreamGenerator.run()
 
     logger.info("Stream has been finished.")
   }

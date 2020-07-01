@@ -32,7 +32,7 @@ import scala.collection.mutable.ArrayBuffer
 
 /**
  *
- * Streaming Fuzzy C-Means is a modification of FCM.
+ * Streaming Streaming C-Means is a modification of FCM.
  *
  * @param k                   number of clusters
  * @param maxIterations       max number of iterations
@@ -193,7 +193,7 @@ class StreamingFuzzyCMeans private(
   }
 
   /**
-   * Train a Streaming Fuzzy C-means model on the given set of points; `data` should be cached for high
+   * Train a Streaming Streaming C-Means model on the given set of points; `data` should be cached for high
    * performance, because this is an iterative algorithm.
    */
   def run(data: RDD[Vector]): StreamingFuzzyCMeansModel = {
@@ -222,7 +222,7 @@ class StreamingFuzzyCMeans private(
   }
 
   /**
-   * Implementation of Streaming Fuzzy C-Means algorithm.
+   * Implementation of Streaming Streaming C-Means algorithm.
    */
   private def runAlgorithm(data: RDD[VectorWithNorm]): StreamingFuzzyCMeansModel = {
 
@@ -568,7 +568,7 @@ class StreamingFuzzyCMeans private(
 
 
 /**
- * Top-level methods for calling Streaming Fuzzy C-means clustering.
+ * Top-level methods for calling Streaming Streaming C-Means clustering.
  */
 object StreamingFuzzyCMeans {
 
@@ -579,7 +579,7 @@ object StreamingFuzzyCMeans {
 
 
   /**
-   * Trains a Streaming fuzzy c-means model using the given set of parameters.
+   * Trains a Streaming Streaming C-Means model using the given set of parameters.
    *
    * @param data          training points stored as `RDD[Vector]`
    * @param k             number of clusters
@@ -598,7 +598,7 @@ object StreamingFuzzyCMeans {
   }
 
   /**
-   * Trains a Streaming fuzzy c-means model using the given set of parameters.
+   * Trains a Streaming Streaming C-Means model using the given set of parameters.
    *
    * @param data          training points stored as `RDD[Vector]`
    * @param k             number of clusters
@@ -620,7 +620,7 @@ object StreamingFuzzyCMeans {
   }
 
   /**
-   * Trains a Streaming fuzzy c-means model using the given set of parameters.
+   * Trains a Streaming Streaming C-Means model using the given set of parameters.
    *
    * @param data          training points stored as `RDD[Vector]`
    * @param k             number of clusters
@@ -647,7 +647,7 @@ object StreamingFuzzyCMeans {
 
 
   /**
-   * Trains a Streaming fuzzy c-means model using the given set of parameters.
+   * Trains a Streaming Streaming C-Means model using the given set of parameters.
    *
    * @param data               training points stored as `RDD[Vector]`
    * @param k                  number of clusters
@@ -672,7 +672,7 @@ object StreamingFuzzyCMeans {
   }
 
   /**
-   * Trains a fuzzy c-means model using the given set of parameters.
+   * Trains a Streaming C-Means model using the given set of parameters.
    *
    * @param data               training points stored as `RDD[Vector]`
    * @param k                  number of clusters
@@ -694,7 +694,7 @@ object StreamingFuzzyCMeans {
   }
 
   /**
-   * Trains a fuzzy c-means model using the given set of parameters.
+   * Trains a Streaming C-Means model using the given set of parameters.
    *
    * @param data               training points stored as `RDD[Vector]`
    * @param k                  number of clusters
@@ -713,7 +713,7 @@ object StreamingFuzzyCMeans {
   }
 
   /**
-   * Trains a fuzzy c-means model using specified parameters and the default values for unspecified.
+   * Trains a Streaming C-Means model using specified parameters and the default values for unspecified.
    *
    * @param data          training points stored as `RDD[Vector]`
    * @param k             number of clusters
@@ -723,8 +723,8 @@ object StreamingFuzzyCMeans {
   def train(
              data: RDD[Vector],
              k: Int,
-             m: Double,
-             maxIterations: Int
+             maxIterations: Int,
+             m: Double
            ): StreamingFuzzyCMeansModel = {
     new StreamingFuzzyCMeans().setK(k)
       .setMaxIterations(maxIterations)

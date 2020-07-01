@@ -4,40 +4,40 @@ import java.time.LocalDateTime
 
 import org.apache.spark.mllib.linalg.Vector
 import org.apache.spark.rdd.RDD
-import org.apache.spark.streaming.adapters.Models.{CrispPredictionRecord, FuzzyPredictionRecord, TimestampVector}
+import org.apache.spark.streaming.adapters.Models.{DataPointRecord, CrispPredictionRecord, FuzzyPredictionRecord}
 
 object Transform {
 
-  def castToTimestampVector(data: RDD[Vector], accessTime: Option[RDD[LocalDateTime]] = None): RDD[TimestampVector] = {
+  def casttoDataPointRecord(data: RDD[Vector], accessTime: Option[LocalDateTime] = None) = {
 
     val timeArray = accessTime match {
       case Some(arr) => arr
-      case None => data.map(x => LocalDateTime.now())
+      case None => LocalDateTime.now()
     }
 
-    data zip timeArray  map(x => TimestampVector(x._2.toString, x._1.toArray))
+    data zipWithUniqueId() map (x => DataPointRecord(timeArray.toString, x._1.toArray, x._2))
 
   }
 
-  def castToFuzzyPredictionRecord(data: RDD[Vector], predict: RDD[Seq[(Int,Double)]], accessTime: Option[RDD[LocalDateTime]] = None) = {
+  def castToFuzzyPredictionRecord(data: RDD[Vector], predict: RDD[Seq[(Int, Double)]], accessTime: Option[LocalDateTime] = None) = {
 
     val timeArray = accessTime match {
       case Some(arr) => arr
-      case None => data.map(x => LocalDateTime.now())
+      case None => LocalDateTime.now()
     }
 
-    data zip predict zip timeArray map(x => FuzzyPredictionRecord(x._2.toString,x._1._1.toArray,x._1._2.map(_._1).toArray,x._1._2.map(_._2).toArray))
+    data zip predict flatMap  (x => x._2.map( y => FuzzyPredictionRecord(timeArray.toString, x._1.toArray, y._1, y._2)))
   }
 
-  def castToCrispPredictionRecord(data: RDD[Vector], predict: RDD[Int],  accessTime: Option[RDD[LocalDateTime]] = None) = {
+  def castToCrispPredictionRecord(data: RDD[Vector], predict: RDD[Int], accessTime: Option[LocalDateTime] = None) = {
+
 
     val timeArray = accessTime match {
       case Some(arr) => arr
-      case None => data.map(x => LocalDateTime.now())
+      case None => LocalDateTime.now()
     }
 
-
-    data zip predict zip timeArray map(x => CrispPredictionRecord(x._2.toString, x._1._1.toArray, x._1._2))
+    data zip predict map (x => CrispPredictionRecord(timeArray.toString, x._1.toArray, x._2))
   }
 
 }

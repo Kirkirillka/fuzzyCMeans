@@ -17,9 +17,9 @@ libraryDependencies ++= Seq(
   , "com.typesafe.scala-logging" %% "scala-logging" % "3.9.2"
   , "com.typesafe" % "config" % "1.4.0"
   , "com.typesafe.scala-logging" %% "scala-logging" % "3.9.2"
+  , "com.github.fommil.netlib" % "all" % "1.1.2" pomOnly()
+  , "org.postgresql" % "postgresql" % "42.2.8"
 )
-
-libraryDependencies += "org.postgresql" % "postgresql" % "42.2.8"
 
 // enable publishing the jar produced by `test:package`
 publishArtifact in(Test, packageBin) := true

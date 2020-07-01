@@ -78,7 +78,7 @@ object Utils {
 
     val SFCMFuzzyPredictSaverJDBCParams: JDBCParams = {
 
-      val defaultConf = FCMFuzzyPredictSaverJDBCParams
+      val defaultConf = DefaultJDBCParams
 
       defaultConf.updated("dbtable", "SFCM_predict")
 
@@ -106,7 +106,7 @@ object Utils {
 
     val UMicroFuzzyPredictSaverJDBCParams: JDBCParams = {
 
-      val defaultConf = FCMFuzzyPredictSaverJDBCParams
+      val defaultConf = DefaultJDBCParams
 
       defaultConf.updated("dbtable", "UMicro_predict")
 
@@ -135,9 +135,69 @@ object Utils {
 
     val dFuzzyStreamFuzzyPredictSaverJDBCParams: JDBCParams = {
 
-      val defaultConf = FCMFuzzyPredictSaverJDBCParams
+      val defaultConf = DefaultJDBCParams
 
       defaultConf.updated("dbtable", "dFuzzyStream_predict")
+
+    }
+
+  }
+
+
+
+  object UncertainStreamDefaultClusterAlgorithmsParams {
+
+    val UncertainStreamClusterSaverJDBCParams: JDBCParams = {
+
+      val defaultConf = DefaultJDBCParams
+
+      defaultConf.updated("dbtable", "UncertainStream_clusters")
+
+    }
+
+    val UncertainStreamDataPointsSaverJDBCParams: JDBCParams = {
+
+      val defaultConf = DefaultJDBCParams
+
+      defaultConf.updated("dbtable", "UncertainStream_points")
+
+    }
+
+    val UncertainStreamFuzzyPredictSaverJDBCParams: JDBCParams = {
+
+      val defaultConf = DefaultJDBCParams
+
+      defaultConf.updated("dbtable", "UncertainStream_predict")
+
+    }
+
+  }
+
+
+
+  object GroundTruthStreamDefaultClusterAlgorithmsParams {
+
+    val GroundTruthStreamClusterSaverJDBCParams: JDBCParams = {
+
+      val defaultConf = DefaultJDBCParams
+
+      defaultConf.updated("dbtable", "GroundTruthStream_clusters")
+
+    }
+
+    val GroundTruthStreamDataPointsSaverJDBCParams: JDBCParams = {
+
+      val defaultConf = DefaultJDBCParams
+
+      defaultConf.updated("dbtable", "GroundTruthStream_points")
+
+    }
+
+    val GroundTruthStreamFuzzyPredictSaverJDBCParams: JDBCParams = {
+
+      val defaultConf = DefaultJDBCParams
+
+      defaultConf.updated("dbtable", "GroundTruthStream_predict")
 
     }
 

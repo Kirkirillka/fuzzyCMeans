@@ -12,23 +12,28 @@ import org.apache.spark.mllib.linalg.{Vectors, Vector}
  */
 case class GaussianStreamSource(val dim: Int,
                                 val mu: Double,
-                                val sigma: Double) extends StreamSource[Vector](dim){
+                                val sigma: Double,
+                                val limit: Int = 1000) extends StreamSource[Vector]{
 
   /**
    * a real Gaussian  (mu, sigma) to use
    */
-  val dist = new Gaussian(mu, sigma)
+  private val dist = new Gaussian(mu, sigma)
+
+  private def get_sample =  Vectors.dense(dist.sample(dim).toArray)
+
+  private val source = Iterator.continually(get_sample).take(limit)
 
   // Anytime returns true to indicate there always something in line
-  override def hasNext: Boolean = true
+  override def hasNext: Boolean = source.hasNext
 
   /**
    * A 'dim' - dimensional sample from Gaussian distribution (mu, sigma)
    * @return a 'dim' dimensional Vector
    */
-  override def next(): Vector = Vectors.dense(dist.sample(dim).toArray)
+  override def next(): Vector = source.next
 
 
-  override def toStream = Stream.continually(this.next())
+  override def toStream: Stream[Vector] = source.toStream
 
 }
