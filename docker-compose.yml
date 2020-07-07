@@ -14,11 +14,10 @@ services:
       - zookeeper
 
   postgres:
-    image: postgres
+    image: postgres:alpine
     restart: always
     environment:
       POSTGRES_PASSWORD: postgres
-      PGDATA: /var/lib/postgresql/data/pgdata
     ports:
       - 5432:5432
 
