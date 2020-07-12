@@ -4,13 +4,16 @@ import java.time.LocalDateTime
 
 import org.apache.spark.mllib.linalg.Vector
 import org.apache.spark.rdd.RDD
+import org.apache.spark.sql.streaming.OutputMode
 import org.apache.spark.sql.{SaveMode, SparkSession}
 import org.apache.spark.streaming.adapters.Transform._
 import org.apache.spark.streaming.dstream.generators.Utils.{JDBCParams, KafkaParams}
 
+import scala.reflect.io.Path
+
 object Outputs {
 
-  def _toPostgresSQL(params: JDBCParams,optional_tb_prefix: Option[String] = None) = (data: RDD[Vector], timestamp: LocalDateTime) => {
+  def _toPostgresSQL(params: JDBCParams,optional_tb_prefix: Option[String] = None): (RDD[Vector], LocalDateTime) => (RDD[Vector], LocalDateTime) = (data: RDD[Vector], timestamp: LocalDateTime) => {
 
     val ss = SparkSession.builder().sparkContext(data.sparkContext).getOrCreate()
     import ss.implicits._
@@ -35,8 +38,24 @@ object Outputs {
     (data, timestamp)
   }
 
+  def _toHDFS(hdfsAddress: String,folderPath: String): (RDD[Vector], LocalDateTime) => (RDD[Vector], LocalDateTime) = (data: RDD[Vector], timestamp: LocalDateTime) => {
 
-  def _toKafka(params: KafkaParams) = (data: RDD[Vector]) => {
+    val ss = SparkSession.builder().sparkContext(data.sparkContext).getOrCreate()
+    import ss.implicits._
+
+    casttoDataPointRecord(data, Some(timestamp))
+      // use case class ClusterRecord to add user-friendly names for columns being saved
+      .toDS()
+      .repartition(3)
+      .write
+      .mode("append")
+      .parquet(hdfsAddress + "/" + folderPath)
+
+    (data, timestamp)
+  }
+
+
+  def _toKafka(params: KafkaParams): RDD[Vector] => RDD[Vector] = (data: RDD[Vector]) => {
 
     val session = SparkSession.builder().sparkContext(data.sparkContext).getOrCreate()
     import session.implicits._
@@ -89,6 +108,25 @@ object Outputs {
     }
 
     data
+  }
+
+  def toFuzzyPredictionResultSaveToHDFS(hdfsAddress: String,folderPath: String) = (data: RDD[Vector],
+                                                                                                                fuzzyPredicts:  RDD[Seq[(Int, Double)]], timestamp: LocalDateTime) => {
+
+
+    val ss = SparkSession.builder().sparkContext(data.sparkContext).getOrCreate()
+    import ss.implicits._
+
+    castToFuzzyPredictionRecord(data, fuzzyPredicts, Some(timestamp))
+      // use case class DataPointFuzzyResult to add user-friendly names for columns being saved
+      .toDS()
+      .repartition(3)
+      .write
+      .mode("append")
+      .parquet(hdfsAddress + "/" + folderPath)
+
+    (data, fuzzyPredicts)
+
   }
 
 

@@ -13,7 +13,7 @@ object Utils {
       case _ => ConfigFactory.load()
     }
 
-    val useHDFS = initialConf.getBoolean("apache.spark.use_hdfs")
+    val useHDFS = initialConf.getBoolean("apache.spark.use_config_on_hdfs")
     val conf: Config = if (useHDFS) {
       val hdfsAddress = initialConf.getString("apache.spark.hadoop.address")
       val path = configName match {
@@ -23,7 +23,7 @@ object Utils {
 
       val hdfsConf = new Configuration()
 
-      hdfsConf.set("fs.defaultFS", s"hdfs://$hdfsAddress/")
+      hdfsConf.set("fs.defaultFS", hdfsAddress)
 
       val hdfs = FileSystem.get(hdfsConf)
       val stream = new InputStreamReader(hdfs.open(new Path(path)))

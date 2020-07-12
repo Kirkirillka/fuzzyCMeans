@@ -38,9 +38,37 @@ case class dFuzzyStreamClusterGenerator(override val source: StreamSource[Vector
 
     val cxt = session.sparkContext
 
-    val pointSink = _toPostgresSQL(dFuzzyStreamDataPointsSaverJDBCParams, Some(optionalPrefix))
-    val clusterSink = _toPostgresSQL(dFuzzyStreamClusterSaverJDBCParams, Some(optionalPrefix))
-    val predictSink = toFuzzyPredictionResultSaveToPostgreSQL(dFuzzyStreamFuzzyPredictSaverJDBCParams, Some(optionalPrefix))
+    val saveOnHDFS=conf.getBoolean("apache.spark.save_on_hdfs")
+
+    val pointSink = saveOnHDFS match {
+      case true => {
+        val hdfsPath = conf.getString("apache.spark.hadoop.address")
+        val path = conf.getString("apache.spark.hadoop.save_path")
+
+        _toHDFS(hdfsPath, s"$path/point_$optionalPrefix")
+      }
+      case false => _toPostgresSQL(dFuzzyStreamDataPointsSaverJDBCParams, Some(optionalPrefix))
+    }
+    val clusterSink = saveOnHDFS match {
+      case true => {
+        val hdfsPath = conf.getString("apache.spark.hadoop.address")
+        val path = conf.getString("apache.spark.hadoop.save_path")
+
+        _toHDFS(hdfsPath, s"$path/cluster_$optionalPrefix")
+      }
+      case false => _toPostgresSQL(dFuzzyStreamClusterSaverJDBCParams, Some(optionalPrefix))
+    }
+
+    val predictSink = saveOnHDFS match {
+      case true => {
+        val hdfsPath = conf.getString("apache.spark.hadoop.address")
+        val path = conf.getString("apache.spark.hadoop.save_path")
+
+        toFuzzyPredictionResultSaveToHDFS(hdfsPath, s"$path/predict_$optionalPrefix")
+      }
+      case false => toFuzzyPredictionResultSaveToPostgreSQL(dFuzzyStreamFuzzyPredictSaverJDBCParams, Some(optionalPrefix))
+    }
+
 
     var lastClusters = Array.empty[FuzzyCluster]
 
