@@ -7,20 +7,21 @@ import org.apache.spark.internal.Logging
 import org.apache.spark.mllib.clustering.FuzzyCMeans
 import org.apache.spark.mllib.linalg.Vector
 import org.apache.spark.sql.SparkSession
+import org.apache.spark.streaming.Utils.getConfig
 import org.apache.spark.streaming.adapters.Outputs._
 import org.apache.spark.streaming.adapters.Pipeline
-import org.apache.spark.streaming.dstream.generators.Utils.UncertainStreamDefaultClusterAlgorithmsParams.{_}
-import org.apache.spark.streaming.dstream.generators.Utils.GroundTruthStreamDefaultClusterAlgorithmsParams.{_}
+import org.apache.spark.streaming.dstream.generators.Utils.UncertainStreamDefaultClusterAlgorithmsParams._
+import org.apache.spark.streaming.dstream.generators.Utils.GroundTruthStreamDefaultClusterAlgorithmsParams._
 import org.apache.spark.streaming.sources.StreamSource
 
-case class GroundTruth_UncertainDSGenerator private(val train: StreamSource[Vector],
-                                                    val test: StreamSource[Vector],
+case class GroundTruth_UncertainDSGenerator private(train: StreamSource[Vector],
+                                                    test: StreamSource[Vector],
                                                     override val session: SparkSession,
                                                     override val window: Int = 30,
                                                     override val step: Int = 30
                               ) extends StreamGenerator[Vector](test, session, window, step) with Logging {
 
-  val conf: Config = ConfigFactory.load()
+  val conf: Config = getConfig()
 
   private val k = conf.getInt("streaming.algorithm.k_required")
   private val m = conf.getDouble("streaming.algorithm.m")

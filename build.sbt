@@ -19,6 +19,11 @@ libraryDependencies ++= Seq(
   , "com.typesafe.scala-logging" %% "scala-logging" % "3.9.2"
   , "com.github.fommil.netlib" % "all" % "1.1.2" pomOnly()
   , "org.postgresql" % "postgresql" % "42.2.8"
+  , "org.apache.hadoop" % "hadoop-common" % "2.7.4"
+  , "org.apache.hadoop" % "hadoop-hdfs" % "2.7.4"
+//  , "com.fasterxml.jackson.module" %% "jackson-module-scala" %  "2.8.8"
+//  , "com.fasterxml.jackson.core" %% "jackson-databind" % "2.8.8"
+//  , "com.fasterxml.jackson.module" %% "jackson-module-scala" % "2.8.8"
 )
 
 // enable publishing the jar produced by `test:package`

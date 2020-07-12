@@ -7,6 +7,7 @@ import org.apache.spark.internal.Logging
 import org.apache.spark.mllib.clustering.{UMicro, UncertainCluster}
 import org.apache.spark.mllib.linalg.Vector
 import org.apache.spark.sql.SparkSession
+import org.apache.spark.streaming.Utils.getConfig
 import org.apache.spark.streaming.adapters.Outputs._
 import org.apache.spark.streaming.adapters.Pipeline
 import org.apache.spark.streaming.dstream.generators.Utils.UMicroDefaultClusterAlgorithmsParams._
@@ -18,8 +19,7 @@ case class UMicroStreamClusterGenerator(override val source: StreamSource[Vector
                                         override val step: Int =20
                                ) extends StreamGenerator[Vector](source, session, window, step) with Logging {
 
-  val conf: Config = ConfigFactory.load()
-
+  val conf: Config = getConfig()
   private val maxK = conf.getInt("streaming.algorithm.k_max")
   private val optionalPrefix = conf.getString("streaming.option_db_prefix")
   private val useHistory = conf.getBoolean("streaming.use_history")
@@ -48,9 +48,10 @@ case class UMicroStreamClusterGenerator(override val source: StreamSource[Vector
         val timestamp = x._2
         val rdd = x._1
 
-        val nextIter = useHistory match {
-          case true => UMicro.train(rdd,maxK,lastClusters)
-          case false => UMicro.train(rdd,maxK)
+        val nextIter = if (useHistory) {
+          UMicro.train(rdd, maxK, lastClusters)
+        } else {
+          UMicro.train(rdd, maxK)
         }
 
         // use found fuzzy clusters for the next iteration
@@ -65,8 +66,7 @@ case class UMicroStreamClusterGenerator(override val source: StreamSource[Vector
         (rdd, predicts, timestamp)
       })
       // Save predictions in Postgres
-      .map(x => predictSink(x._1,x._2, x._3))
-      .foreach(x => toClusterPrint(x._1, x._2))
+      .foreach(x => predictSink(x._1,x._2, x._3))
   }
 
 }

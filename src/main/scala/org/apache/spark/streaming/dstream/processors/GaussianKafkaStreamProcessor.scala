@@ -11,7 +11,7 @@ import org.apache.spark.streaming.{Seconds, StreamingContext}
 class GaussianKafkaStreamProcessor(val params: KafkaParams,
                                         val session: SparkSession) {
 
-  val topics = params("servers").split(",")
+  val topics: Array[String] = params("servers").split(",")
 
   private val derivedKafkaParams = Map[String, Object](
     "bootstrap.servers" -> params("servers"),
@@ -23,12 +23,12 @@ class GaussianKafkaStreamProcessor(val params: KafkaParams,
   )
 
 
-  def handle(obj: Seq[Vector[Double]]) = {
+  def handle(obj: Seq[Vector[Double]]): Unit = {
     println("Received" + obj)
   }
 
 
-  def run() = {
+  def run(): Unit = {
 
     val streamingContext = new StreamingContext(session.sparkContext, Seconds(1))
 
@@ -50,7 +50,6 @@ class GaussianKafkaStreamProcessor(val params: KafkaParams,
     stream.map(record => record.value).foreachRDD(r =>
     {
       println(r)
-      r
     }
     )
 

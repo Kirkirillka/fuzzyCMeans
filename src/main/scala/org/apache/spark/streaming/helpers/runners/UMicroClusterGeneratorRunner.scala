@@ -1,8 +1,13 @@
 package org.apache.spark.streaming.helpers.runners
 
+import java.io.InputStreamReader
+
 import com.typesafe.config.{Config, ConfigFactory}
 import com.typesafe.scalalogging.Logger
+import org.apache.hadoop.conf.Configuration
+import org.apache.hadoop.fs.{FileSystem, Path}
 import org.apache.spark.sql.SparkSession
+import org.apache.spark.streaming.Utils.getConfig
 import org.apache.spark.streaming.adapters.Pipeline
 import org.apache.spark.streaming.dstream.generators.UMicroStreamClusterGenerator
 
@@ -14,7 +19,7 @@ object UMicroClusterGeneratorRunner {
   def main(args: Array[String]): Unit = {
 
     logger.info("Loading configuration")
-    val conf: Config = ConfigFactory.load()
+    val conf: Config = getConfig()
 
     val dim = conf.getInt("streaming.synthetic.dim")
     val window = conf.getInt("streaming.synthetic.window")

@@ -1,9 +1,10 @@
 package org.apache.spark.streaming.adapters
 
-import com.typesafe.config.{Config, ConfigFactory}
+import com.typesafe.config.Config
 import org.apache.spark.mllib.linalg.Vector
 import org.apache.spark.rdd.RDD
 import org.apache.spark.sql.SparkSession
+import org.apache.spark.streaming.Utils.getConfig
 import org.apache.spark.streaming.adapters.Outputs._
 import org.apache.spark.streaming.dstream.generators.Utils.KafkaParams
 import org.apache.spark.streaming.dstream.generators._
@@ -12,13 +13,13 @@ import org.apache.spark.streaming.sources._
 case class Pipeline private(data: Iterator[RDD[Vector]]) extends Iterator[RDD[Vector]] {
 
 
-  def toConsole = {
+  def toConsole: Pipeline = {
     data.foreach(_toConsole()(_))
 
     this
   }
 
-  def toKafka(params: KafkaParams) = {
+  def toKafka(params: KafkaParams): Pipeline = {
 
     val sinkFunctor = _toKafka(params)
 
@@ -36,14 +37,14 @@ case class Pipeline private(data: Iterator[RDD[Vector]]) extends Iterator[RDD[Ve
 
 object Pipeline {
 
-  def fromSource(source: StreamSource[Vector], session: SparkSession, windows: Int = 30, step: Int = 10) = {
+  def fromSource(source: StreamSource[Vector], session: SparkSession, windows: Int = 30, step: Int = 10): Pipeline = {
     Pipeline(source.toStream.sliding(windows, step).map(session.sparkContext parallelize _))
   }
 
 
   def getClusterDSGenerator(session: SparkSession, name: String = "sfcm"): StreamGenerator[Vector] = {
 
-    val conf: Config = ConfigFactory.load()
+    val conf: Config = getConfig()
 
     val dataSourceType = conf.getString("streaming.datasource")
     val window = conf.getInt("streaming.synthetic.window")
@@ -59,11 +60,8 @@ object Pipeline {
       case "train_test" => {
         val trainStreamName = conf.getString("streaming.train_test.train")
         val testStreamName = conf.getString("streaming.train_test.test")
-
-
         val trainStream = getDataSource(trainStreamName)
         val testStream = getDataSource(testStreamName)
-
         GroundTruth_UncertainDSGenerator(trainStream, testStream, session, window, step)
       }
     }
@@ -72,7 +70,7 @@ object Pipeline {
 
   def getDataSource(name: String = "gaussian"): StreamSource[Vector] = {
 
-    val conf: Config = ConfigFactory.load()
+    val conf: Config = getConfig()
 
     // Gaussian stream
     val dim = conf.getInt("streaming.synthetic.dim")

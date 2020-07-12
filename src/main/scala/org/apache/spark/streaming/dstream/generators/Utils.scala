@@ -1,6 +1,7 @@
 package org.apache.spark.streaming.dstream.generators
 
 import com.typesafe.config.{Config, ConfigFactory}
+import org.apache.spark.streaming.Utils.getConfig
 
 object Utils {
 
@@ -10,7 +11,7 @@ object Utils {
 
 
   val DefaultKafkaParams: KafkaParams = {
-    val conf: Config = ConfigFactory.load()
+    val conf: Config = getConfig()
 
     Map(
       "inTopics" -> conf.getString("apache.spark.kafka.inTopics"),
@@ -23,7 +24,7 @@ object Utils {
 
   val DefaultJDBCParams: JDBCParams = {
 
-    val conf: Config = ConfigFactory.load()
+    val conf: Config = getConfig()
 
     Map(
       "server" -> conf.getString("apache.spark.jdbc.server"),

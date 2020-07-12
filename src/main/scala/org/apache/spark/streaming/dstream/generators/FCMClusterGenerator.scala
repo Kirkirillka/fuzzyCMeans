@@ -1,12 +1,16 @@
 package org.apache.spark.streaming.dstream.generators
 
+import java.io.InputStreamReader
 import java.time.LocalDateTime
 
 import com.typesafe.config.{Config, ConfigFactory}
+import org.apache.hadoop.conf.Configuration
+import org.apache.hadoop.fs.{FileSystem, Path}
 import org.apache.spark.internal.Logging
 import org.apache.spark.mllib.clustering.FuzzyCMeans
 import org.apache.spark.mllib.linalg.Vector
 import org.apache.spark.sql.SparkSession
+import org.apache.spark.streaming.Utils.getConfig
 import org.apache.spark.streaming.adapters.Outputs._
 import org.apache.spark.streaming.adapters.Pipeline
 import org.apache.spark.streaming.dstream.generators.Utils._
@@ -18,7 +22,7 @@ case class FCMClusterGenerator private (override val source: StreamSource[Vector
                                override val step: Int = 30
                               ) extends StreamGenerator[Vector](source, session, window, step) with Logging {
 
-  val conf: Config = ConfigFactory.load()
+  val conf: Config = getConfig()
 
   private val k = conf.getInt("streaming.algorithm.k_required")
   private val m = conf.getDouble("streaming.algorithm.m")
@@ -58,8 +62,7 @@ case class FCMClusterGenerator private (override val source: StreamSource[Vector
         (rdd, fuzzyPredicts,timestamp)
       })
       // Save predictions in Postgres
-      .map(x => predictSink(x._1,x._2, x._3))
-      .foreach(x => toFuzzyClusterPrint(x._1, x._2))
+      .foreach(x => predictSink(x._1,x._2, x._3))
   }
 
 }
